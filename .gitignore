@@ -1,0 +1,42 @@
+# Ambiente virtual
+.venv/
+venv/
+
+# Cache do Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Arquivos compilados
+*.so
+
+# Distribuição
+build/
+dist/
+*.egg-info/
+
+# Arquivos de ambiente
+.env
+.env.*
+
+# Configurações do VS Code
+.vscode/
+
+# Configurações do PyCharm
+.idea/
+
+# Cache de testes
+.pytest_cache/
+
+# Cache do MyPy
+.mypy_cache/
+
+# Cache do Ruff
+.ruff_cache/
+
+# Cache do Jupyter
+.ipynb_checkpoints/
+
+# Arquivos do sistema
+.DS_Store
+Thumbs.db
