@@ -1,5 +1,5 @@
 from audio.audioLoader import AudioLoader
-
+from audio.waveFormVisualizer import WaveFormVisualizer
 
 def main():
 
@@ -15,6 +15,10 @@ def main():
 
     print(f"Sample Rate: {sampleRate} Hz")
     print(f"Número de amostras: {len(audioSignal)}")
+
+    visualizer = WaveFormVisualizer();
+
+    visualizer.plotWaveform(audioSignal, sampleRate)
 
 
 if __name__ == "__main__":
