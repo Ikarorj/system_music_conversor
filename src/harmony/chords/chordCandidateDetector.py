@@ -1,31 +1,32 @@
 import librosa
 import numpy as np
 
+from harmony.noteUtils import NOTE_NAMES
 
-class NoteDetector:
 
-    NOTE_NAMES = [
-        "C",
-        "C#",
-        "D",
-        "D#",
-        "E",
-        "F",
-        "F#",
-        "G",
-        "G#",
-        "A",
-        "A#",
-        "B"
-    ]
+class ChordCandidateDetector:
 
-    def detectNotes(
+    def detectChordCandidates(
         self,
         chroma,
         sampleRate,
         hopLength=512,
         topNotes=3
     ):
+        """
+        Identifica, em cada frame, quais notas parecem estar
+        presentes e formam um acorde, ordenadas por intensidade.
+
+        Args:
+            chroma (np.ndarray): Matriz chroma (12, n_frames).
+            sampleRate (int): Taxa de amostragem em Hz.
+            hopLength (int): Salto entre frames (em amostras).
+            topNotes (int): Quantidade de notas candidatas por frame.
+
+        Returns:
+            list: Lista de dicionários com time e a lista de notes
+                  (cada uma com note e intensity).
+        """
 
         detectedNotes = []
 
@@ -44,7 +45,7 @@ class NoteDetector:
             for index in topIndexes:
 
                 notes.append({
-                    "note": self.NOTE_NAMES[index],
+                    "note": NOTE_NAMES[index],
                     "intensity": float(column[index])
                 })
 
@@ -54,5 +55,3 @@ class NoteDetector:
             })
 
         return detectedNotes
-
-
