@@ -88,7 +88,6 @@ class ChordSheetGenerator:
         chordSummary,
         key,
         lyrics,
-        windowSeconds=2.0,
         outputPath=None
     ):
         """
@@ -101,17 +100,20 @@ class ChordSheetGenerator:
             key (dict): Tonalidade estimada (key, root, mode, score).
             lyrics (list): Trechos do LyricsTranscriber.transcribe,
                 cada um com start, end e text.
-            windowSeconds (float): Duração da janela dos acordes.
             outputPath (str): Caminho opcional para salvar a cifra.
 
         Returns:
             str: Texto da cifra com letra.
         """
 
-        chordsByTime = {
-            entry["time"]: entry["chord"]
-            for entry in chordSummary
-        }
+        def chordAtTime(time):
+            active = "?"
+            for entry in chordSummary:
+                if entry["time"] <= time:
+                    active = entry["chord"]
+                else:
+                    break
+            return active
 
         lines = []
 
@@ -133,10 +135,7 @@ class ChordSheetGenerator:
 
         for segment in lyrics:
 
-            windowIndex = int(segment["start"] // windowSeconds)
-            windowTime = windowIndex * windowSeconds
-
-            chord = chordsByTime.get(windowTime, "?")
+            chord = chordAtTime(segment["start"])
 
             time = _formatTime(segment["start"])
 

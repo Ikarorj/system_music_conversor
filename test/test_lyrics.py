@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from audio.audioLoader import AudioLoader
 from features.chromaExtractor import ChromaExtractor
+from features.tempoExtractor import TempoExtractor
 from harmony.chordDetector import (
     ChordDetector,
     diatonicChordsForKey
@@ -15,6 +16,58 @@ from harmony.chordDetector import (
 from harmony.keyDetector import KeyDetector
 from lyrics.lyricsTranscriber import LyricsTranscriber
 from output.shordSheetGenerator import ChordSheetGenerator
+
+
+def formatTime(seconds):
+    minutes = int(seconds // 60)
+    remainingSeconds = seconds - minutes * 60
+    return f"{minutes:02d}:{remainingSeconds:05.2f}"
+
+
+def printWordTimestamps(lyrics):
+    """
+    Imprime no terminal o momento em que cada palavra/letra é
+    detectada no áudio.
+
+    O Whisper fornece o tempo exato de cada palavra. O momento de
+    cada letra é estimado dividindo a duração da palavra de forma
+    uniforme entre os seus caracteres.
+
+    Args:
+        lyrics (list): Saída de LyricsTranscriber.transcribe.
+    """
+
+    print("=" * 50)
+    print("Letras detectadas por momento do áudio")
+    print("=" * 50)
+
+    for segment in lyrics:
+
+        for word in segment["words"]:
+
+            text = word["word"]
+
+            if not text:
+                continue
+
+            start = formatTime(word["start"])
+            end = formatTime(word["end"])
+
+            print(f"{start} - {end}  {text}")
+
+            duration = word["end"] - word["start"]
+            letters = list(text)
+            perLetter = duration / len(letters)
+
+            for i, letter in enumerate(letters):
+                letterStart = word["start"] + i * perLetter
+                letterEnd = letterStart + perLetter
+
+                print(
+                    f"    {letter!r:4s}  "
+                    f"{formatTime(letterStart)} - "
+                    f"{formatTime(letterEnd)}"
+                )
 
 
 def main():
@@ -43,15 +96,19 @@ def main():
     chroma = ChromaExtractor().extractChroma(signal, sr)
     key = KeyDetector().detectKey(chroma)
     labels = diatonicChordsForKey(key["root"], key["mode"])
-    summary = ChordDetector().detectChordSummary(
+
+    tempoInfo = TempoExtractor().extractTempo(signal, sr)
+    summary = ChordDetector().detectChordSummaryWithBeats(
         chroma,
         sr,
-        windowSeconds=2.0,
+        beatTimes=tempoInfo["beatTimes"],
+        beatsPerWindow=2,
         labels=labels
     )
 
     print(f"Acordes e tom em {time.time() - t0:.1f}s")
     print(f"Tom: {key['key']}")
+    print(f"Tempo: {tempoInfo['tempo']:.1f} BPM")
 
     print()
     print("Transcrevendo letra (faster-whisper)...")
@@ -72,6 +129,9 @@ def main():
     )
 
     print(f"Letra transcrita em {time.time() - t0:.1f}s")
+    print()
+
+    printWordTimestamps(lyrics)
     print()
 
     outputPath = Path(__file__).resolve().parents[1] / "audios" / "outputs" / "cifra_letra.txt"

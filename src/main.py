@@ -1,6 +1,7 @@
 from audio.audioLoader import AudioLoader
 from audio.waveFormVisualizer import WaveFormVisualizer
 from features.chromaExtractor import ChromaExtractor
+from features.tempoExtractor import TempoExtractor
 from harmony.chordDetector import (
     ChordDetector,
     diatonicChordsForKey
@@ -123,6 +124,18 @@ def main():
         + ", ".join(chordLabels)
     )
 
+    tempoExtractor = TempoExtractor()
+
+    tempoInfo = tempoExtractor.extractTempo(
+        audioSignal,
+        sampleRate
+    )
+
+    print(
+        f"Tempo: {tempoInfo['tempo']:.1f} BPM "
+        f"({len(tempoInfo['beatTimes'])} batidas detectadas)"
+    )
+
     print()
     print("=" * 50)
     print("Cifra simplificada para violão")
@@ -130,9 +143,11 @@ def main():
 
     chordDetector = ChordDetector()
 
-    chordSummary = chordDetector.detectChordSummary(
+    chordSummary = chordDetector.detectChordSummaryWithBeats(
         chroma,
         sampleRate,
+        beatTimes=tempoInfo["beatTimes"],
+        beatsPerWindow=2,
         labels=chordLabels
     )
 

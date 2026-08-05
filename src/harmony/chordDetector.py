@@ -240,6 +240,129 @@ class ChordDetector:
                 :, sliceStart:sliceEnd
             ].mean(axis=1)
 
+        windowTimes = [
+            float(window * windowSeconds)
+            for window in range(nWindows)
+        ]
+
+        return self._summarizeWindows(
+            windowChroma,
+            windowTimes,
+            labels,
+            topChords=topChords,
+            smoothWindows=smoothWindows
+        )
+
+    def detectChordSummaryWithBeats(
+        self,
+        chroma,
+        sampleRate,
+        beatTimes,
+        beatsPerWindow=2,
+        hopLength=512,
+        topChords=3,
+        labels=None,
+        smoothWindows=1
+    ):
+        """
+        Gera um resumo de acordes por janela alinhada às batidas do
+        áudio (em vez de janelas fixas de tempo).
+
+        Cada janela cobre beatsPerWindow batidas consecutivas, e o
+        chroma da janela é a média dos frames dentro dela. Isso deixa
+        a segmentação sincronizada com o ritmo, capturando mudanças de
+        acorde que janelas fixas apagam.
+
+        Args:
+            chroma (np.ndarray): Matriz chroma (12, n_frames).
+            sampleRate (int): Taxa de amostragem em Hz.
+            beatTimes (list): Tempo (s) de cada batida
+                (de TempoExtractor.extractTempo).
+            beatsPerWindow (int): Batidas por janela.
+            hopLength (int): Salto entre frames (em amostras).
+            topChords (int): Quantos acordes candidatos por janela.
+            labels (list): Rótulos de acordes permitidos. Se None,
+                usa o vocabulário completo.
+            smoothWindows (int): Largura do filtro mediano sobre os
+                acordes das janelas.
+
+        Returns:
+            list: Lista de dicionários com time, chord, root,
+                  quality, score e candidates (um por janela).
+        """
+
+        centeredChroma = self._centerChroma(chroma)
+
+        windowChromaList = []
+        windowTimes = []
+
+        beatTimes = np.asarray(beatTimes, dtype=float)
+
+        for i in range(
+            0,
+            max(0, len(beatTimes) - beatsPerWindow),
+            beatsPerWindow
+        ):
+
+            startTime = float(beatTimes[i])
+            endTime = float(beatTimes[i + beatsPerWindow])
+
+            startFrame = int(round(startTime * sampleRate / hopLength))
+            endFrame = int(round(endTime * sampleRate / hopLength))
+
+            if endFrame <= startFrame:
+                continue
+
+            windowChromaList.append(
+                centeredChroma[:, startFrame:endFrame].mean(axis=1)
+            )
+            windowTimes.append(startTime)
+
+        if not windowChromaList:
+            return []
+
+        windowChroma = np.array(windowChromaList).T
+
+        return self._summarizeWindows(
+            windowChroma,
+            windowTimes,
+            labels,
+            topChords=topChords,
+            smoothWindows=smoothWindows
+        )
+
+    def _summarizeWindows(
+        self,
+        windowChroma,
+        windowTimes,
+        labels,
+        topChords=3,
+        smoothWindows=1
+    ):
+        """
+        Compara o chroma de cada janela com os templates e monta o
+        resumo de acordes. Compartilhado entre detectChordSummary e
+        detectChordSummaryWithBeats.
+
+        Args:
+            windowChroma (np.ndarray): Matriz chroma (12, n_windows).
+            windowTimes (list): Tempo (s) de início de cada janela.
+            labels (list): Rótulos de acordes permitidos. Se None,
+                usa o vocabulário completo.
+            topChords (int): Quantos acordes candidatos por janela.
+            smoothWindows (int): Largura do filtro mediano sobre os
+                acordes das janelas.
+
+        Returns:
+            list: Resumo de acordes por janela.
+        """
+
+        if labels is None:
+            templates = self.templates
+            chordLabels = self.labels
+        else:
+            templates, chordLabels = self._buildTemplates(labels)
+
         scores = self._cosineSimilarity(windowChroma, templates)
 
         bestIndexes = np.argmax(scores, axis=0)
@@ -252,7 +375,7 @@ class ChordDetector:
 
         summary = []
 
-        for window in range(nWindows):
+        for window in range(windowChroma.shape[1]):
 
             bestIndex = int(bestIndexes[window])
 
@@ -272,7 +395,7 @@ class ChordDetector:
             bestRoot, bestQuality = splitChordLabel(bestLabel)
 
             summary.append({
-                "time": float(window * windowSeconds),
+                "time": float(windowTimes[window]),
                 "chord": bestLabel,
                 "root": bestRoot,
                 "quality": bestQuality,

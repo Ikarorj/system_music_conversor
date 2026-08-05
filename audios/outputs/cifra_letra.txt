@@ -3,81 +3,9 @@ Campo harmônico: Dm, Edim, F, Gm, Am, A#, C
 
 Cifra + letra sincronizada:
 
-00:26.13  Dm      20 legações no celular
-  00:26.13  20
-  00:26.71  legações
-  00:27.35  no
-  00:27.63  celular
-00:29.31  F       Já não sei se quero te atender
-  00:29.31  Já
-  00:29.79  não
-  00:30.01  sei
-  00:30.21  se
-  00:30.35  quero
-  00:30.71  te
-  00:30.93  atender
-00:32.53  C       Não sei, não me quer que me muda
-  00:32.53  Não
-  00:33.01  sei,
-  00:33.27  não
-  00:33.39  me
-  00:33.59  quer
-  00:33.79  que
-  00:33.99  me
-  00:34.13  muda
-00:34.75  Dm      Não sou melhor, mas amo o meu jeito de ser
-  00:34.75  Não
-  00:35.41  sou
-  00:35.75  melhor,
-  00:36.29  mas
-  00:36.47  amo
-  00:36.71  o
-  00:36.87  meu
-  00:37.01  jeito
-  00:37.31  de
-  00:37.57  ser
-00:39.17  Dm      20 legações no celular
-  00:39.17  20
-  00:39.65  legações
-  00:40.13  no
-  00:40.47  celular
-00:42.13  F       Já não sei, quero te atender
-  00:42.13  Já
-  00:42.61  não
-  00:42.79  sei,
-  00:43.13  quero
-  00:43.55  te
-  00:43.73  atender
-00:45.33  Dm      Não sei, não me quer que me muda
-  00:45.33  Não
-  00:45.81  sei,
-  00:46.09  não
-  00:46.17  me
-  00:46.41  quer
-  00:46.63  que
-  00:46.75  me
-  00:46.95  muda
-00:47.93  Dm      Não sou melhor, mas amo o meu jeito de ser
-  00:47.93  Não
-  00:48.17  sou
-  00:48.53  melhor,
-  00:49.07  mas
-  00:49.27  amo
-  00:49.51  o
-  00:49.69  meu
-  00:49.87  jeito
-  00:50.09  de
-  00:50.35  ser
-00:50.73  Dm      20 legações no celular
-  00:50.73  20
-  00:51.25  legações
-  00:52.21  no
-  00:52.21  celular
-00:56.06  C       Já não sei se quero te atender
-  00:56.06  Já
-  00:56.30  não
-  00:56.30  sei
-  00:56.40  se
-  00:56.52  quero
-  00:57.62  te
-  00:57.62  atender
+00:35.22  C       A música de português brasileiro.
+  00:35.22  A
+  00:35.68  música
+  00:35.68  de
+  00:42.08  português
+  00:44.26  brasileiro.
