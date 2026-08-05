@@ -1,8 +1,11 @@
 from audio.audioLoader import AudioLoader
 from audio.waveFormVisualizer import WaveFormVisualizer
 from features.chromaExtractor import ChromaExtractor
+from harmony.chordDetector import ChordDetector
 from harmony.chords.chordCandidateDetector import ChordCandidateDetector
+from harmony.keyDetector import KeyDetector
 from harmony.pitch.predominantPitchDetector import PredominantPitchDetector
+from harmony.progressionAnalyzer import ProgressionAnalyzer
 
 
 def formatTime(seconds):
@@ -93,14 +96,82 @@ def main():
         sampleRate
     )
 
-    for result in detectedNotes[:10]:
+    print()
+    print("=" * 50)
+    print("Tonalidade estimada (Krumhansl-Schmuckler)")
+    print("=" * 50)
+
+    keyDetector = KeyDetector()
+
+    estimatedKey = keyDetector.detectKey(chroma)
+
+    print(
+        f"Tonalidade: {estimatedKey['key']} "
+        f"(correlação {estimatedKey['score']:.3f})"
+    )
+
+    print()
+    print("=" * 50)
+    print("Acordes detectados por template matching")
+    print("=" * 50)
+
+    chordDetector = ChordDetector()
+
+    chordFrames = chordDetector.detectChords(
+        chroma,
+        sampleRate
+    )
+
+    progressionAnalyzer = ProgressionAnalyzer()
+
+    progression = progressionAnalyzer.detectProgression(
+        chordFrames
+    )
+
+    print("Progressão de acordes:")
+    print()
+
+    for segment in progression:
+
+        start = formatTime(segment["start"])
+        end = formatTime(segment["end"])
+
+        print(
+            f"{start} - {end} "
+            f"({segment['duration']:.2f}s) -> {segment['chord']}"
+        )
+
+    print()
+    print("Cifra aproximada (resumo por janela de 2s):")
+    print()
+
+    chordSummary = chordDetector.detectChordSummary(
+        chroma,
+        sampleRate
+    )
+
+    for entry in chordSummary:
+
+        time = formatTime(entry["time"])
+
+        bestCandidate = entry["candidates"][0]
+
+        print(
+            f"{time} -> {entry['chord']:9s} "
+            f"({bestCandidate['score']:.2f})"
+        )
+
+    print()
+    print("Acordes candidatos por frame (primeiros 10):")
+
+    for result in chordFrames[:10]:
 
         print(f"\nTempo: {result['time']:.2f}s")
 
-        for note in result["notes"]:
+        for candidate in result["candidates"]:
 
             print(
-                f"{note['note']} -> {note['intensity']:.3f}"
+                f"{candidate['chord']} -> {candidate['score']:.3f}"
             )
 
     print()
