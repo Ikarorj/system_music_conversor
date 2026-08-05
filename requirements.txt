@@ -5,3 +5,5 @@ scipy==1.18.0
 matplotlib==3.11.0
 soundfile==0.14.0
 jupyterlab==4.6.1
+faster-whisper==1.2.1
+demucs==4.1.0
