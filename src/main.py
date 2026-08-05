@@ -1,11 +1,14 @@
 from audio.audioLoader import AudioLoader
 from audio.waveFormVisualizer import WaveFormVisualizer
 from features.chromaExtractor import ChromaExtractor
-from harmony.chordDetector import ChordDetector
+from harmony.chordDetector import (
+    ChordDetector,
+    diatonicChordsForKey
+)
 from harmony.chords.chordCandidateDetector import ChordCandidateDetector
 from harmony.keyDetector import KeyDetector
 from harmony.pitch.predominantPitchDetector import PredominantPitchDetector
-from harmony.progressionAnalyzer import ProgressionAnalyzer
+from output.shordSheetGenerator import ChordSheetGenerator
 
 
 def formatTime(seconds):
@@ -110,69 +113,37 @@ def main():
         f"(correlação {estimatedKey['score']:.3f})"
     )
 
+    chordLabels = diatonicChordsForKey(
+        estimatedKey["root"],
+        estimatedKey["mode"]
+    )
+
+    print(
+        "Campo harmônico: "
+        + ", ".join(chordLabels)
+    )
+
     print()
     print("=" * 50)
-    print("Acordes detectados por template matching")
+    print("Cifra simplificada para violão")
     print("=" * 50)
 
     chordDetector = ChordDetector()
 
-    chordFrames = chordDetector.detectChords(
-        chroma,
-        sampleRate
-    )
-
-    progressionAnalyzer = ProgressionAnalyzer()
-
-    progression = progressionAnalyzer.detectProgression(
-        chordFrames
-    )
-
-    print("Progressão de acordes:")
-    print()
-
-    for segment in progression:
-
-        start = formatTime(segment["start"])
-        end = formatTime(segment["end"])
-
-        print(
-            f"{start} - {end} "
-            f"({segment['duration']:.2f}s) -> {segment['chord']}"
-        )
-
-    print()
-    print("Cifra aproximada (resumo por janela de 2s):")
-    print()
-
     chordSummary = chordDetector.detectChordSummary(
         chroma,
-        sampleRate
+        sampleRate,
+        labels=chordLabels
     )
 
-    for entry in chordSummary:
+    sheetGenerator = ChordSheetGenerator()
 
-        time = formatTime(entry["time"])
+    sheet = sheetGenerator.generate(
+        chordSummary,
+        estimatedKey
+    )
 
-        bestCandidate = entry["candidates"][0]
-
-        print(
-            f"{time} -> {entry['chord']:9s} "
-            f"({bestCandidate['score']:.2f})"
-        )
-
-    print()
-    print("Acordes candidatos por frame (primeiros 10):")
-
-    for result in chordFrames[:10]:
-
-        print(f"\nTempo: {result['time']:.2f}s")
-
-        for candidate in result["candidates"]:
-
-            print(
-                f"{candidate['chord']} -> {candidate['score']:.3f}"
-            )
+    print(sheet)
 
     print()
     print("=" * 50)

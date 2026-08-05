@@ -29,6 +29,55 @@ SIMPLE_QUALITIES = [
     "sus4"
 ]
 
+MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11]
+MINOR_SCALE = [0, 2, 3, 5, 7, 8, 10]
+
+MAJOR_DIATONIC_QUALITIES = ["", "m", "m", "", "", "m", "dim"]
+MINOR_DIATONIC_QUALITIES = ["m", "dim", "", "m", "m", "", ""]
+
+
+def splitChordLabel(label):
+    """
+    Divide um rótulo de acorde em (tônica, qualidade).
+    Lida com tônicas sustenizadas: "C#m" -> ("C#", "m").
+    """
+
+    if label[1:2] == "#":
+        return label[:2], label[2:]
+    return label[0], label[1:]
+
+
+def diatonicChordsForKey(rootName, mode):
+    """
+    Campo harmônico (tríades diatônicas) de uma tonalidade.
+
+    Args:
+        rootName (str): Tônica, ex.: "D".
+        mode (str): "major" ou "minor".
+
+    Returns:
+        list: Rótulos dos acordes, ex.: ["Dm", "Edim", "F", "Gm",
+              "Am", "Bb", "C"] para Ré menor.
+    """
+
+    rootIndex = NOTE_NAMES.index(rootName)
+
+    scale = (
+        MAJOR_SCALE if mode == "major" else MINOR_SCALE
+    )
+    qualities = (
+        MAJOR_DIATONIC_QUALITIES if mode == "major"
+        else MINOR_DIATONIC_QUALITIES
+    )
+
+    chords = []
+
+    for semitone, quality in zip(scale, qualities):
+        chordRoot = NOTE_NAMES[(rootIndex + semitone) % 12]
+        chords.append(f"{chordRoot}{quality}")
+
+    return chords
+
 
 class ChordDetector:
 
@@ -43,10 +92,11 @@ class ChordDetector:
 
         Args:
             qualities (list): Qualidades de acorde a considerar.
-                Se None, usa todas as qualidades de CHORD_QUALITIES.
+                Se None, usa SIMPLE_QUALITIES (tríades + 7ª + sus),
+                que produzem cifras simples de violão.
         """
 
-        self.qualities = qualities or list(CHORD_QUALITIES.keys())
+        self.qualities = qualities or list(SIMPLE_QUALITIES)
         self.templates, self.labels = self._buildTemplates()
 
     def detectChords(
@@ -137,14 +187,19 @@ class ChordDetector:
         sampleRate,
         hopLength=512,
         windowSeconds=2.0,
-        smoothWindows=3,
-        topChords=3
+        smoothWindows=1,
+        topChords=3,
+        labels=None
     ):
         """
         Gera um resumo de acordes por janela de tempo, ideal para
         misturas complexas (música completa): o chroma de cada janela
         é calculado pela média dos frames da janela, filtrando o ruído
         frame a frame.
+
+        Quando labels é informado (ex.: campo harmônico da tonalidade
+        via diatonicChordsForKey), a detecção fica restrita a esses
+        acordes.
 
         Args:
             chroma (np.ndarray): Matriz chroma (12, n_frames).
@@ -154,11 +209,19 @@ class ChordDetector:
             smoothWindows (int): Largura do filtro mediano sobre os
                 acordes das janelas.
             topChords (int): Quantos acordes candidatos por janela.
+            labels (list): Rótulos de acordes permitidos. Se None,
+                usa o vocabulário completo.
 
         Returns:
             list: Lista de dicionários com time, chord, root,
                   quality, score e candidates (um por janela).
         """
+
+        if labels is None:
+            templates = self.templates
+            chordLabels = self.labels
+        else:
+            templates, chordLabels = self._buildTemplates(labels)
 
         centeredChroma = self._centerChroma(chroma)
 
@@ -177,7 +240,7 @@ class ChordDetector:
                 :, sliceStart:sliceEnd
             ].mean(axis=1)
 
-        scores = self._cosineSimilarity(windowChroma, self.templates)
+        scores = self._cosineSimilarity(windowChroma, templates)
 
         bestIndexes = np.argmax(scores, axis=0)
 
@@ -186,8 +249,6 @@ class ChordDetector:
                 bestIndexes,
                 size=smoothWindows
             )
-
-        nQualities = len(self.qualities)
 
         summary = []
 
@@ -201,43 +262,58 @@ class ChordDetector:
 
             candidates = [
                 {
-                    "chord": self.labels[index],
+                    "chord": chordLabels[index],
                     "score": float(windowScores[index])
                 }
                 for index in topIndexes
             ]
 
+            bestLabel = chordLabels[bestIndex]
+            bestRoot, bestQuality = splitChordLabel(bestLabel)
+
             summary.append({
                 "time": float(window * windowSeconds),
-                "chord": self.labels[bestIndex],
-                "root": NOTE_NAMES[bestIndex // nQualities],
-                "quality": self.qualities[bestIndex % nQualities],
+                "chord": bestLabel,
+                "root": bestRoot,
+                "quality": bestQuality,
                 "score": float(windowScores[bestIndex]),
                 "candidates": candidates
             })
 
         return summary
 
-    def _buildTemplates(self):
+    def _buildTemplates(self, chordLabels=None):
         """
         Constrói a matriz de templates (12, n_templates) e os rótulos
         correspondentes no formato "C", "Am", "G7", etc.
+
+        Args:
+            chordLabels (list): Rótulos a usar. Se None, constrói
+                todas as combinações de tônica x qualidade.
         """
 
+        if chordLabels is None:
+            chordLabels = [
+                f"{NOTE_NAMES[root]}{quality}"
+                for root in range(12)
+                for quality in self.qualities
+            ]
+
         templates = []
-        labels = []
 
-        for root in range(12):
-            for quality in self.qualities:
-                vector = np.zeros(12)
+        for label in chordLabels:
+            rootName, quality = splitChordLabel(label)
 
-                for semitone in CHORD_QUALITIES[quality]:
-                    vector[(root + semitone) % 12] = 1.0
+            root = NOTE_NAMES.index(rootName)
 
-                templates.append(vector)
-                labels.append(f"{NOTE_NAMES[root]}{quality}")
+            vector = np.zeros(12)
 
-        return np.array(templates).T, labels
+            for semitone in CHORD_QUALITIES[quality]:
+                vector[(root + semitone) % 12] = 1.0
+
+            templates.append(vector)
+
+        return np.array(templates).T, chordLabels
 
     @staticmethod
     def _centerChroma(chroma):

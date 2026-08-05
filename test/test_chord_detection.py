@@ -6,14 +6,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from audio.audioLoader import AudioLoader
 from features.chromaExtractor import ChromaExtractor
-from harmony.chordDetector import ChordDetector
+from harmony.chordDetector import (
+    ChordDetector,
+    diatonicChordsForKey
+)
 from harmony.keyDetector import KeyDetector
+from output.shordSheetGenerator import ChordSheetGenerator
 
 
-def formatTime(seconds):
-    minutes = int(seconds // 60)
-    remainingSeconds = seconds - minutes * 60
-    return f"{minutes:02d}:{remainingSeconds:05.2f}"
+def detectChart(audioSignal, sampleRate):
+    chroma = ChromaExtractor().extractChroma(audioSignal, sampleRate)
+    key = KeyDetector().detectKey(chroma)
+    labels = diatonicChordsForKey(key["root"], key["mode"])
+    summary = ChordDetector().detectChordSummary(
+        chroma,
+        sampleRate,
+        windowSeconds=2.0,
+        labels=labels
+    )
+    return key, summary
 
 
 def testSynthetic():
@@ -35,7 +46,6 @@ def testSynthetic():
         quality = "m" if name.endswith("m") else ""
         rootName = name[:-1] if quality else name
         signal = np.zeros(int(SR * CHORD_SECONDS))
-        rootIndex = list(NOTE_HZ).index(rootName)
         t = np.arange(len(signal)) / SR
         for semitone in QUALITY[quality]:
             noteHz = NOTE_HZ[rootName] * 2 ** (semitone / 12)
@@ -47,43 +57,33 @@ def testSynthetic():
 
     audio = np.concatenate(chunks)
 
-    chroma = ChromaExtractor().extractChroma(audio, SR, harmonic=False)
-    summary = ChordDetector().detectChordSummary(
-        chroma, SR, windowSeconds=2.0, smoothWindows=1
-    )
-
+    key, summary = detectChart(audio, SR)
     detected = [entry["chord"] for entry in summary]
 
-    print("Teste sintético (C, Am, F, G):")
+    print("Teste sintético (C, Am, F, G em Dó Maior):")
+    print(f"  tom: {key['key']}")
     print(f"  detectado: {detected}")
     ok = detected == progression
     print(f"  {'PASSOU' if ok else 'FALHOU'}")
     return ok
 
 
-def testReal(audioPath, durationSeconds):
+def testReal(audioPath, durationSeconds, outputPath=None):
     signal, sr = AudioLoader().loadAudio(audioPath)
     if durationSeconds and durationSeconds < len(signal) / sr:
         signal = signal[: int(durationSeconds * sr)]
 
     t0 = time.time()
-    chroma = ChromaExtractor().extractChroma(signal, sr)
-    key = KeyDetector().detectKey(chroma)
-    summary = ChordDetector().detectChordSummary(chroma, sr)
+    key, summary = detectChart(signal, sr)
+    sheet = ChordSheetGenerator().generate(
+        summary,
+        key,
+        outputPath=outputPath
+    )
 
     print(f"Áudio real: {audioPath} "
           f"({len(signal) / sr:.0f}s) em {time.time() - t0:.1f}s")
-    print(f"Tonalidade: {key['key']} (corr {key['score']:.3f})")
-    print("Cifra aproximada (janelas de 2s):")
-    for entry in summary:
-        candidates = ", ".join(
-            f"{c['chord']} ({c['score']:.2f})"
-            for c in entry["candidates"]
-        )
-        print(
-            f"  {formatTime(entry['time'])} -> {entry['chord']:9s} "
-            f"| cand: {candidates}"
-        )
+    print(sheet)
 
 
 def main():
