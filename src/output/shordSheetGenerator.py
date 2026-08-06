@@ -113,6 +113,8 @@ class ChordSheetGenerator:
                     active = entry["chord"]
                 else:
                     break
+            if active == "?" and chordSummary:
+                return chordSummary[0]["chord"]
             return active
 
         lines = []

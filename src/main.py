@@ -24,7 +24,7 @@ def main():
     loader = AudioLoader()
 
     audioSignal, sampleRate = loader.loadAudio(
-        "audios/samples/musicatest2.mpeg"
+        "audios/samples/musica.mpeg"
     )
 
     print("=" * 50)

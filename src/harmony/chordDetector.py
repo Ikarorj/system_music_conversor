@@ -250,6 +250,7 @@ class ChordDetector:
             windowTimes,
             labels,
             topChords=topChords,
+            smoothing="median",
             smoothWindows=smoothWindows
         )
 
@@ -262,7 +263,10 @@ class ChordDetector:
         hopLength=512,
         topChords=3,
         labels=None,
-        smoothWindows=1
+        smoothWindows=1,
+        stayProb=0.5,
+        temperature=10.0,
+        fifthBoost=2.0
     ):
         """
         Gera um resumo de acordes por janela alinhada às batidas do
@@ -272,6 +276,14 @@ class ChordDetector:
         chroma da janela é a média dos frames dentro dela. Isso deixa
         a segmentação sincronizada com o ritmo, capturando mudanças de
         acorde que janelas fixas apagam.
+
+        As janelas cobrem todo o áudio desde 0s (antes da primeira
+        batida), garantindo que os tempos dos acordes fiquem alinhados
+        com qualquer trecho transcrito, mesmo na introdução.
+
+        Por padrão usa suavização Viterbi (HMM) sobre os escores dos
+        templates, favorecendo transições musicais (quinta justa) e
+        reduzindo trocas espúrias, sem congelar a cifra.
 
         Args:
             chroma (np.ndarray): Matriz chroma (12, n_frames).
@@ -283,8 +295,13 @@ class ChordDetector:
             topChords (int): Quantos acordes candidatos por janela.
             labels (list): Rótulos de acordes permitidos. Se None,
                 usa o vocabulário completo.
-            smoothWindows (int): Largura do filtro mediano sobre os
-                acordes das janelas.
+            smoothWindows (int): Usado só quando smoothing="median".
+            stayProb (float): Probabilidade de permanecer no mesmo
+                acorde no HMM. Menor = trocas mais fáceis.
+            temperature (float): Temperatura do softmax das emissões.
+                Menor = mais influência do áudio, menos suavização.
+            fifthBoost (float): Peso extra para transições de quinta
+                justa no HMM.
 
         Returns:
             list: Lista de dicionários com time, chord, root,
@@ -293,19 +310,20 @@ class ChordDetector:
 
         centeredChroma = self._centerChroma(chroma)
 
+        beatTimes = np.asarray(beatTimes, dtype=float)
+
+        boundaries = np.concatenate([
+            [0.0],
+            beatTimes[beatsPerWindow::beatsPerWindow]
+        ])
+
         windowChromaList = []
         windowTimes = []
 
-        beatTimes = np.asarray(beatTimes, dtype=float)
+        for i in range(len(boundaries) - 1):
 
-        for i in range(
-            0,
-            max(0, len(beatTimes) - beatsPerWindow),
-            beatsPerWindow
-        ):
-
-            startTime = float(beatTimes[i])
-            endTime = float(beatTimes[i + beatsPerWindow])
+            startTime = float(boundaries[i])
+            endTime = float(boundaries[i + 1])
 
             startFrame = int(round(startTime * sampleRate / hopLength))
             endFrame = int(round(endTime * sampleRate / hopLength))
@@ -328,7 +346,11 @@ class ChordDetector:
             windowTimes,
             labels,
             topChords=topChords,
-            smoothWindows=smoothWindows
+            smoothing="viterbi",
+            smoothWindows=smoothWindows,
+            stayProb=stayProb,
+            temperature=temperature,
+            fifthBoost=fifthBoost
         )
 
     def _summarizeWindows(
@@ -337,7 +359,11 @@ class ChordDetector:
         windowTimes,
         labels,
         topChords=3,
-        smoothWindows=1
+        smoothing="median",
+        smoothWindows=1,
+        stayProb=0.5,
+        temperature=10.0,
+        fifthBoost=2.0
     ):
         """
         Compara o chroma de cada janela com os templates e monta o
@@ -350,8 +376,15 @@ class ChordDetector:
             labels (list): Rótulos de acordes permitidos. Se None,
                 usa o vocabulário completo.
             topChords (int): Quantos acordes candidatos por janela.
-            smoothWindows (int): Largura do filtro mediano sobre os
-                acordes das janelas.
+            smoothing (str): "median" (filtro mediano) ou "viterbi"
+                (HMM com transições musicais).
+            smoothWindows (int): Largura do filtro mediano (usado
+                quando smoothing="median").
+            stayProb (float): Probabilidade de permanecer no mesmo
+                acorde no HMM.
+            temperature (float): Temperatura do softmax das emissões.
+            fifthBoost (float): Peso extra para transições de quinta
+                justa no HMM.
 
         Returns:
             list: Resumo de acordes por janela.
@@ -365,13 +398,22 @@ class ChordDetector:
 
         scores = self._cosineSimilarity(windowChroma, templates)
 
-        bestIndexes = np.argmax(scores, axis=0)
-
-        if smoothWindows > 1:
-            bestIndexes = median_filter(
-                bestIndexes,
-                size=smoothWindows
+        if smoothing == "viterbi":
+            bestIndexes = self._viterbiDecode(
+                scores,
+                chordLabels,
+                stayProb=stayProb,
+                temperature=temperature,
+                fifthBoost=fifthBoost
             )
+        else:
+            bestIndexes = np.argmax(scores, axis=0)
+
+            if smoothWindows > 1:
+                bestIndexes = median_filter(
+                    bestIndexes,
+                    size=smoothWindows
+                )
 
         summary = []
 
@@ -404,6 +446,156 @@ class ChordDetector:
             })
 
         return summary
+
+    def _viterbiDecode(
+        self,
+        scores,
+        chordLabels,
+        stayProb=0.5,
+        temperature=10.0,
+        fifthBoost=2.0
+    ):
+        """
+        Decodifica a sequência de acordes com Viterbi (HMM).
+
+        As emissões vêm dos escores de similaridade cosseno de cada
+        janela (normalizados em log-probabilidades). As transições
+        favorecem permanecer no mesmo acorde e mover por quinta justa,
+        reduzindo trocas espúrias sem congelar a cifra.
+
+        Args:
+            scores (np.ndarray): Matriz (n_states, n_windows) de
+                escores de similaridade.
+            chordLabels (list): Rótulos dos acordes (estados).
+            stayProb (float): Probabilidade de permanecer no mesmo
+                acorde.
+            temperature (float): Temperatura do softmax das emissões.
+            fifthBoost (float): Peso extra para transições de quinta
+                justa.
+
+        Returns:
+            np.ndarray: Índices dos estados ao longo das janelas.
+        """
+
+        nStates, nFrames = scores.shape
+
+        roots = np.array([
+            NOTE_NAMES.index(splitChordLabel(label)[0])
+            for label in chordLabels
+        ])
+
+        transition = self._buildTransitionMatrix(
+            nStates,
+            roots,
+            stayProb=stayProb,
+            fifthBoost=fifthBoost
+        )
+        logTransition = np.log(transition + 1e-12)
+        logEmission = self._logEmission(
+            scores,
+            temperature=temperature
+        )
+
+        viterbi = np.zeros((nStates, nFrames))
+        backpointer = np.zeros((nStates, nFrames), dtype=int)
+
+        viterbi[:, 0] = logEmission[:, 0]
+
+        for frame in range(1, nFrames):
+
+            candidates = (
+                viterbi[:, frame - 1][:, None]
+                + logTransition
+            )
+
+            bestPrevious = np.argmax(candidates, axis=0)
+            viterbi[:, frame] = (
+                logEmission[:, frame]
+                + candidates[bestPrevious, np.arange(nStates)]
+            )
+            backpointer[:, frame] = bestPrevious
+
+        path = np.zeros(nFrames, dtype=int)
+        path[-1] = int(np.argmax(viterbi[:, -1]))
+
+        for frame in range(nFrames - 1, 0, -1):
+            path[frame - 1] = backpointer[path[frame], frame]
+
+        return path
+
+    @staticmethod
+    def _buildTransitionMatrix(nStates, chordRoots, stayProb=0.9, fifthBoost=3.0):
+        """
+        Matriz de transição (n_states, n_states) do HMM.
+
+        Permanecer no mesmo acorde é o mais provável. Entre acordes
+        diferentes, a probabilidade é distribuída dando peso maior às
+        relações de quinta justa (tônica <-> dominante), as mais comuns
+        em progressões harmônicas.
+
+        Args:
+            nStates (int): Número de acordes.
+            chordRoots (np.ndarray): Tônicas (0-11) de cada acorde.
+            stayProb (float): Probabilidade de permanecer no acorde.
+            fifthBoost (float): Peso extra para movimentos de quinta.
+
+        Returns:
+            np.ndarray: Matriz de transição.
+        """
+
+        moveProb = 1.0 - stayProb
+
+        transition = np.full((nStates, nStates), moveProb)
+
+        for i in range(nStates):
+            transition[i, i] = stayProb
+
+        for i in range(nStates):
+
+            weights = np.ones(nStates)
+            weights[i] = 0.0
+
+            for j in range(nStates):
+
+                if j == i:
+                    continue
+
+                semitoneDiff = abs(int(chordRoots[i]) - int(chordRoots[j]))
+                semitoneDiff = min(semitoneDiff, 12 - semitoneDiff)
+
+                if semitoneDiff in (5, 7):
+                    weights[j] = fifthBoost
+
+            total = weights.sum()
+
+            if total > 0:
+                transition[i] = moveProb * weights / total
+                transition[i, i] = stayProb
+
+        return transition
+
+    @staticmethod
+    def _logEmission(scores, temperature=4.0):
+        """
+        Converte os escores de similaridade de cada janela em
+        log-probabilidades (softmax por janela com temperatura).
+
+        A temperatura controla o quanto o HMM "confia" no template
+        matching: valores altos deixam a suavização dominar.
+
+        Args:
+            scores (np.ndarray): Matriz (n_states, n_windows).
+            temperature (float): Temperatura do softmax.
+
+        Returns:
+            np.ndarray: Log-probabilidades das emissões.
+        """
+
+        centered = scores - scores.max(axis=0, keepdims=True)
+        expScores = np.exp(centered * temperature)
+        probs = expScores / expScores.sum(axis=0, keepdims=True)
+
+        return np.log(probs + 1e-12)
 
     def _buildTemplates(self, chordLabels=None):
         """

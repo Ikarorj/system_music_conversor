@@ -3,9 +3,24 @@ Campo harmônico: Dm, Edim, F, Gm, Am, A#, C
 
 Cifra + letra sincronizada:
 
-00:35.22  C       A música de português brasileiro.
-  00:35.22  A
-  00:35.68  música
-  00:35.68  de
-  00:42.08  português
-  00:44.26  brasileiro.
+00:35.22  C       Não sou melhor, mas já não sei se quer, quer que me mudar. Não sou melhor a cidade me ter.
+  00:35.22  Não
+  00:35.40  sou
+  00:35.70  melhor,
+  00:36.28  mas
+  00:42.38  já
+  00:42.62  não
+  00:42.78  sei
+  00:43.02  se
+  00:43.18  quer,
+  00:46.47  quer
+  00:46.63  que
+  00:46.79  me
+  00:46.97  mudar.
+  00:47.85  Não
+  00:48.19  sou
+  00:48.49  melhor
+  00:56.50  a
+  00:56.74  cidade
+  00:57.06  me
+  00:57.36  ter.

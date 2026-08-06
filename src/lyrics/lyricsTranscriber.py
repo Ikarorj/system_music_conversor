@@ -46,6 +46,7 @@ class LyricsTranscriber:
         initialPrompt=None,
         hotwords=None,
         vadFilter=True,
+        conditionOnPreviousText=False,
         isolateVocals=False
     ):
         """
@@ -69,6 +70,10 @@ class LyricsTranscriber:
                 modelo deve priorizar na transcrição.
             vadFilter (bool): Se True, usa detecção de voz para
                 ignorar trechos sem fala.
+            conditionOnPreviousText (bool): Se True, o modelo usa o
+                texto anterior como contexto de cada trecho, o que
+                pode gerar repetições/hallucinação. O padrão False
+                evita trechos "fora de contexto".
             isolateVocals (bool): Se True, isola a voz com Demucs
                 antes de transcrever.
 
@@ -111,7 +116,8 @@ class LyricsTranscriber:
             vad_filter=vadFilter,
             beam_size=beamSize,
             initial_prompt=initialPrompt,
-            hotwords=hotwords
+            hotwords=hotwords,
+            condition_on_previous_text=conditionOnPreviousText
         )
 
         transcribed = []
