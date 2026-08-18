@@ -1,193 +1,225 @@
-from audio.audioLoader import AudioLoader
+import argparse
+import logging
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from musicAnalyzer import MusicAnalyzer
+from audio.audioPreprocessor import AudioPreprocessor
 from audio.waveFormVisualizer import WaveFormVisualizer
-from features.chromaExtractor import ChromaExtractor
-from features.tempoExtractor import TempoExtractor
-from harmony.chordDetector import (
-    ChordDetector,
-    diatonicChordsForKey
-)
-from harmony.chords.chordCandidateDetector import ChordCandidateDetector
-from harmony.keyDetector import KeyDetector
-from harmony.pitch.predominantPitchDetector import PredominantPitchDetector
-from output.shordSheetGenerator import ChordSheetGenerator
 
 
 def formatTime(seconds):
     minutes = int(seconds // 60)
     remainingSeconds = seconds - minutes * 60
-
     return f"{minutes:02d}:{remainingSeconds:05.2f}"
 
 
-def main():
-
-    loader = AudioLoader()
-
-    audioSignal, sampleRate = loader.loadAudio(
-        "audios/samples/musica.mpeg"
+def setupLogging(verbose=False):
+    level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S"
     )
 
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Music POC - Reconhecimento de acordes "
+                    "e geração de cifras para violão"
+    )
+
+    parser.add_argument(
+        "audio",
+        nargs="?",
+        help="Caminho do arquivo de áudio"
+    )
+    parser.add_argument(
+        "--list-chords", action="store_true",
+        help="Lista os acordes detectados por janela"
+    )
+    parser.add_argument(
+        "--list-segments", action="store_true",
+        help="Lista segmentos de progressão (acorde repetido)"
+    )
+    parser.add_argument(
+        "--lyrics", action="store_true",
+        help="Transcreve a letra da música"
+    )
+    parser.add_argument(
+        "--isolate", action="store_true",
+        help="Isola a voz com Demucs antes de transcrever"
+    )
+    parser.add_argument(
+        "--language", default=None,
+        help="Idioma para transcrição (ex.: pt)"
+    )
+    parser.add_argument(
+        "--export", nargs="+",
+        choices=["txt", "json", "csv", "musicxml"],
+        default=[],
+        help="Formatos de exportação"
+    )
+    parser.add_argument(
+        "--method", choices=["cqt", "nnls"], default="nnls",
+        help="Método de extração de chroma (padrão: nnls)"
+    )
+    parser.add_argument(
+        "--no-simplify", action="store_true",
+        help="Não simplifica acordes complexos"
+    )
+    parser.add_argument(
+        "--no-chunked", action="store_true",
+        help="Desativa chunking no Viterbi"
+    )
+    parser.add_argument(
+        "--chunk-beats", type=int, default=200,
+        help="Batidas por chunk no Viterbi (padrão: 200)"
+    )
+    parser.add_argument(
+        "--beats-per-window", type=int, default=4,
+        help="Batidas por janela de acorde (padrão: 4 = um compasso)"
+    )
+    parser.add_argument(
+        "--no-plot", action="store_true",
+        help="Não exibe gráficos"
+    )
+    parser.add_argument(
+        "--output-dir", default="output",
+        help="Diretório de saída (padrão: output)"
+    )
+    parser.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="Saída detalhada (DEBUG)"
+    )
+
+    args = parser.parse_args()
+
+    setupLogging(args.verbose)
+
+    if not args.audio:
+        parser.print_help()
+        sys.exit(1)
+
+    audioPath = args.audio
+
+    if not Path(audioPath).exists():
+        print(f"Erro: arquivo não encontrado: {audioPath}")
+        sys.exit(1)
+
+    preprocessor = AudioPreprocessor()
+
+    analyzer = MusicAnalyzer(
+        preprocessor=preprocessor,
+        chunkedDetection=not args.no_chunked,
+        chunkBeats=args.chunk_beats,
+        simplifyChords=not args.no_simplify,
+        outputDir=args.output_dir
+    )
+
+    result = analyzer.analyze(
+        audioPath,
+        language=args.language,
+        transcribeLyrics=args.lyrics,
+        isolateVocals=args.isolate,
+        exportFormats=args.export if args.export else None,
+        chordMethod=args.method,
+        beatsPerWindow=args.beats_per_window
+    )
+
+    print()
     print("=" * 50)
     print("Áudio carregado com sucesso!")
     print("=" * 50)
 
-    print(f"Sample Rate: {sampleRate} Hz")
-    print(f"Número de amostras: {len(audioSignal)}")
+    info = result["audioInfo"]
+    print(f"Sample Rate: {info['sampleRate']} Hz")
+    print(f"Número de amostras: {info['samples']}")
+    print(f"Duração: {info['duration']:.2f}s")
 
-    duration = len(audioSignal) / sampleRate
+    if not args.no_plot:
+        try:
+            visualizer = WaveFormVisualizer()
+            originalAudio, originalSr = result["_originalAudio"]
+            visualizer.plotWaveform(originalAudio, originalSr)
+        except Exception:
+            pass
 
-    print(f"Duração: {duration:.2f}s")
-
-    waveformVisualizer = WaveFormVisualizer()
-
-    waveformVisualizer.plotWaveform(
-        audioSignal,
-        sampleRate
-    )
-
-    pitchDetector = PredominantPitchDetector()
-    chordDetector = ChordCandidateDetector()
-
-    print()
-    print("Detectando nota predominante em cada frame (pYIN)...")
-    print("Isso pode levar alguns minutos. Aguarde...")
-
-    predominantNotes = pitchDetector.detectPredominantNote(
-        audioSignal,
-        sampleRate
-    )
-
-    print("Detecção concluída!")
-    print()
-
-    segments = pitchDetector.detectNoteSegments(
-        predominantNotes
-    )
-
-    print("=" * 50)
-    print("Nota predominante por momento do áudio")
-    print("=" * 50)
-
-    for segment in segments:
-
-        noteName = segment["note"]
-
-        if segment["octave"] is not None:
-            noteName = f"{noteName}{segment['octave']}"
-
-        start = formatTime(segment["start"])
-        end = formatTime(segment["end"])
-
-        print(
-            f"{start} - {end} "
-            f"({segment['duration']:.2f}s) -> {noteName}"
-        )
-
-    print()
-    print("=" * 50)
-    print("Visão geral (chroma): notas mais fortes")
-    print("=" * 50)
-
-    chromaExtractor = ChromaExtractor()
-
-    chroma = chromaExtractor.extractChroma(
-        audioSignal,
-        sampleRate
-    )
-
-    detectedNotes = chordDetector.detectChordCandidates(
-        chroma,
-        sampleRate
-    )
-
+    key = result["key"]
     print()
     print("=" * 50)
     print("Tonalidade estimada (Krumhansl-Schmuckler)")
     print("=" * 50)
-
-    keyDetector = KeyDetector()
-
-    estimatedKey = keyDetector.detectKey(chroma)
-
     print(
-        f"Tonalidade: {estimatedKey['key']} "
-        f"(correlação {estimatedKey['score']:.3f})"
+        f"Tonalidade: {key['key']} "
+        f"(escore {key['score']:.3f})"
     )
-
-    chordLabels = diatonicChordsForKey(
-        estimatedKey["root"],
-        estimatedKey["mode"]
-    )
-
     print(
         "Campo harmônico: "
-        + ", ".join(chordLabels)
+        + ", ".join(result["diatonicChords"])
     )
 
-    tempoExtractor = TempoExtractor()
-
-    tempoInfo = tempoExtractor.extractTempo(
-        audioSignal,
-        sampleRate
-    )
-
+    tempo = result["tempo"]
     print(
-        f"Tempo: {tempoInfo['tempo']:.1f} BPM "
-        f"({len(tempoInfo['beatTimes'])} batidas detectadas)"
+        f"Tempo: {tempo['tempo']:.1f} BPM "
+        f"({len(tempo['beatTimes'])} batidas detectadas)"
     )
 
-    print()
-    print("=" * 50)
-    print("Cifra simplificada para violão")
-    print("=" * 50)
+    if args.list_chords:
+        print()
+        print("=" * 50)
+        print("Cifra simplificada para violão")
+        print("=" * 50)
+        print(result["sheet"])
 
-    chordDetector = ChordDetector()
-
-    chordSummary = chordDetector.detectChordSummaryWithBeats(
-        chroma,
-        sampleRate,
-        beatTimes=tempoInfo["beatTimes"],
-        beatsPerWindow=2,
-        labels=chordLabels
-    )
-
-    sheetGenerator = ChordSheetGenerator()
-
-    sheet = sheetGenerator.generate(
-        chordSummary,
-        estimatedKey
-    )
-
-    print(sheet)
-
-    print()
-    print("=" * 50)
-    print("Detecção precisa por frame (primeiras 10)")
-    print("=" * 50)
-
-    for result in predominantNotes[:10]:
-
-        noteName = result["note"]
-
-        if noteName is None:
-
+    if args.list_segments and "progression" in result:
+        print()
+        print("=" * 50)
+        print("Progressão de acordes")
+        print("=" * 50)
+        for seg in result["progression"]:
+            start = formatTime(seg["start"])
+            end = formatTime(seg["end"])
             print(
-                f"Tempo: {result['time']:.2f}s -> "
-                f"sem nota detectada"
+                f"{start} - {end} "
+                f"({seg['duration']:.2f}s) -> {seg['chord']}"
             )
 
-            continue
+    if "simplifiedChords" in result:
+        simplified = [
+            e for e in result["simplifiedChords"]
+            if e.get("simplified")
+        ]
+        if simplified:
+            print()
+            print("=" * 50)
+            print("Acordes simplificados")
+            print("=" * 50)
+            for e in simplified:
+                print(
+                    f"  {e['originalChord']} -> {e['chord']}"
+                )
 
-        if result["octave"] is not None:
-            noteName = f"{noteName}{result['octave']}"
+    if args.lyrics and "lyrics" in result:
+        print()
+        print("=" * 50)
+        print("Letra transcrita")
+        print("=" * 50)
+        for seg in result["lyrics"]:
+            time = formatTime(seg["start"])
+            print(f"{time}  {seg['text']}")
 
-        print(
-            f"Tempo: {result['time']:.2f}s -> "
-            f"{noteName} "
-            f"({result['frequency']:.2f} Hz, "
-            f"{result['cents']:+d} cents, "
-            f"confiança {result['confidence']:.2f})"
-        )
+    print()
+    print(
+        f"Tempo de processamento: "
+        f"{result['processingTime']:.2f}s"
+    )
+
+    if args.export:
+        print()
+        print(f"Arquivos exportados em: {args.output_dir}/")
 
 
 if __name__ == "__main__":

@@ -1,26 +1,38 @@
-Tom: D minor (correlação 0.972)
-Campo harmônico: Dm, Edim, F, Gm, Am, A#, C
+Tom: A major (correlação 1.000)
+Campo harmônico: A, Amaj7, Bm, Bm7, C#m, C#m7, D, Dmaj7, E, Emaj7, F#m, F#m7, G#dim, G#m7b5, C, F, G
 
 Cifra + letra sincronizada:
 
-00:35.22  C       Não sou melhor, mas já não sei se quer, quer que me mudar. Não sou melhor a cidade me ter.
-  00:35.22  Não
-  00:35.40  sou
-  00:35.70  melhor,
-  00:36.28  mas
-  00:42.38  já
-  00:42.62  não
-  00:42.78  sei
-  00:43.02  se
-  00:43.18  quer,
-  00:46.47  quer
-  00:46.63  que
-  00:46.79  me
-  00:46.97  mudar.
-  00:47.85  Não
-  00:48.19  sou
-  00:48.49  melhor
-  00:56.50  a
-  00:56.74  cidade
-  00:57.06  me
-  00:57.36  ter.
+00:01.82  A       E se pede a parte com dois hortifilmes igual dois hortifilmes
+  00:01.82  E
+  00:02.92  se
+  00:03.10  pede
+  00:03.82  a
+  00:04.10  parte
+  00:07.15  com
+  00:11.36  dois
+  00:11.78  hortifilmes
+  00:15.54  igual
+  00:15.86  dois
+  00:16.18  hortifilmes
+00:17.40  A       Tem dias que é melhor a gente nem sair da cama
+  00:17.40  Tem
+  00:17.72  dias
+  00:18.20  que
+  00:18.48  é
+  00:18.58  melhor
+  00:19.02  a
+  00:19.38  gente
+  00:19.62  nem
+  00:20.14  sair
+  00:20.56  da
+  00:20.96  cama
+00:21.44  A       Pra não ter chance de esbarrar com agitação
+  00:21.44  Pra
+  00:22.06  não
+  00:22.32  ter
+  00:22.58  chance
+  00:22.90  de
+  00:23.30  esbarrar
+  00:23.94  com
+  00:33.55  agitação

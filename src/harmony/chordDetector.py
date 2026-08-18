@@ -25,9 +25,22 @@ SIMPLE_QUALITIES = [
     "m",
     "7",
     "m7",
+    "maj7",
+    "dim",
+    "aug",
     "sus2",
-    "sus4"
+    "sus4",
+    "add9"
 ]
+
+SEVENTH_QUALITY = {
+    "": "maj7",
+    "m": "m7",
+    "dim": "m7b5"
+}
+
+MAJOR_BORROWED_OFFSETS = [3, 8, 10]
+MINOR_BORROWED_OFFSETS = [0, 5, 7]
 
 MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11]
 MINOR_SCALE = [0, 2, 3, 5, 7, 8, 10]
@@ -47,13 +60,30 @@ def splitChordLabel(label):
     return label[0], label[1:]
 
 
-def diatonicChordsForKey(rootName, mode):
+def diatonicChordsForKey(
+    rootName,
+    mode,
+    includeSevenths=True,
+    includeBorrowed=True
+):
     """
     Campo harmônico (tríades diatônicas) de uma tonalidade.
+
+    Quando includeSevenths=True, também são geradas as versões com
+    sétima dos acordes diatônicos (ex.: V7, iim7, Imaj7), comuns em
+    músicas reais e ainda simples no violão.
+
+    Quando includeBorrowed=True, são adicionados acordes de empréstimo
+    do modo paralelo (empréstimos modais): no modo maior, os acordes
+    bIII, bVI e bVII do menor paralelo (ex.: D#, G# e A# em Dó maior);
+    no modo menor, o I, o IV e o V maiores do paralelo (o V é a
+    dominante do menor harmônico, ex.: A, D e E em Lá menor).
 
     Args:
         rootName (str): Tônica, ex.: "D".
         mode (str): "major" ou "minor".
+        includeSevenths (bool): Incluir sétimas diatônicas.
+        includeBorrowed (bool): Incluir empréstimos modais.
 
     Returns:
         list: Rótulos dos acordes, ex.: ["Dm", "Edim", "F", "Gm",
@@ -76,7 +106,33 @@ def diatonicChordsForKey(rootName, mode):
         chordRoot = NOTE_NAMES[(rootIndex + semitone) % 12]
         chords.append(f"{chordRoot}{quality}")
 
-    return chords
+        if includeSevenths:
+            chords.append(
+                f"{chordRoot}{SEVENTH_QUALITY[quality]}"
+            )
+
+    if includeBorrowed:
+        borrowedOffsets = (
+            MAJOR_BORROWED_OFFSETS if mode == "major"
+            else MINOR_BORROWED_OFFSETS
+        )
+
+        for offset in borrowedOffsets:
+            chordRoot = NOTE_NAMES[(rootIndex + offset) % 12]
+            chords.append(chordRoot)
+
+            if includeSevenths and mode == "minor" and offset == 7:
+                chords.append(f"{chordRoot}7")
+
+    seen = set()
+    uniqueChords = []
+
+    for chord in chords:
+        if chord not in seen:
+            seen.add(chord)
+            uniqueChords.append(chord)
+
+    return uniqueChords
 
 
 class ChordDetector:
@@ -92,8 +148,9 @@ class ChordDetector:
 
         Args:
             qualities (list): Qualidades de acorde a considerar.
-                Se None, usa SIMPLE_QUALITIES (tríades + 7ª + sus),
-                que produzem cifras simples de violão.
+                Se None, usa SIMPLE_QUALITIES (tríades + 7ª + sus +
+                maj7/dim/aug/add9), que produzem cifras simples de
+                violão.
         """
 
         self.qualities = qualities or list(SIMPLE_QUALITIES)
@@ -259,14 +316,14 @@ class ChordDetector:
         chroma,
         sampleRate,
         beatTimes,
-        beatsPerWindow=2,
+        beatsPerWindow=4,
         hopLength=512,
         topChords=3,
         labels=None,
         smoothWindows=1,
-        stayProb=0.5,
-        temperature=10.0,
-        fifthBoost=2.0
+        stayProb=0.7,
+        temperature=8.0,
+        fifthBoost=2.5
     ):
         """
         Gera um resumo de acordes por janela alinhada às batidas do
@@ -447,6 +504,139 @@ class ChordDetector:
 
         return summary
 
+    def detectChordSummaryChunked(
+        self,
+        chroma,
+        sampleRate,
+        beatTimes,
+        beatsPerWindow=2,
+        hopLength=512,
+        topChords=3,
+        labels=None,
+        chunkBeats=200,
+        overlapBeats=20,
+        stayProb=0.7,
+        temperature=8.0,
+        fifthBoost=2.5
+    ):
+        """
+        Versão com chunking do detectChordSummaryWithBeats para
+        áudios muito longos. Divide a sequência de batidas em chunks,
+        aplica Viterbi em cada um, e mescla os resultados.
+
+        Args:
+            chunkBeats (int): Número de batidas por chunk.
+            overlapBeats (int): Sobreposição entre chunks em batidas.
+
+        Returns:
+            list: Resumo de acordes mesclado.
+        """
+
+        beatTimes = np.asarray(beatTimes, dtype=float)
+
+        if len(beatTimes) <= chunkBeats:
+            return self.detectChordSummaryWithBeats(
+                chroma, sampleRate, beatTimes,
+                beatsPerWindow=beatsPerWindow,
+                hopLength=hopLength, topChords=topChords,
+                labels=labels, stayProb=stayProb,
+                temperature=temperature, fifthBoost=fifthBoost
+            )
+
+        centeredChroma = self._centerChroma(chroma)
+        step = chunkBeats - overlapBeats
+        allSummaries = []
+
+        for startBeat in range(0, len(beatTimes), step):
+            endBeat = min(startBeat + chunkBeats + 1, len(beatTimes))
+            chunkBeatTimes = beatTimes[startBeat:endBeat]
+
+            if len(chunkBeatTimes) < 3:
+                continue
+
+            timeOffset = float(chunkBeatTimes[0])
+
+            boundaries = np.concatenate([
+                [chunkBeatTimes[0]],
+                chunkBeatTimes[beatsPerWindow::beatsPerWindow]
+            ])
+
+            windowChromaList = []
+            windowTimes = []
+
+            for i in range(len(boundaries) - 1):
+                startTime = float(boundaries[i])
+                endTime = float(boundaries[i + 1])
+                startFrame = int(
+                    round(startTime * sampleRate / hopLength)
+                )
+                endFrame = int(
+                    round(endTime * sampleRate / hopLength)
+                )
+                if endFrame <= startFrame:
+                    continue
+                windowChromaList.append(
+                    centeredChroma[:, startFrame:endFrame].mean(axis=1)
+                )
+                windowTimes.append(startTime)
+
+            if not windowChromaList:
+                continue
+
+            windowChroma = np.array(windowChromaList).T
+            chunkSummary = self._summarizeWindows(
+                windowChroma,
+                windowTimes,
+                labels,
+                topChords=topChords,
+                smoothing="viterbi",
+                stayProb=stayProb,
+                temperature=temperature,
+                fifthBoost=fifthBoost
+            )
+
+            for entry in chunkSummary:
+                entry["time"] = entry["time"] + timeOffset
+
+            allSummaries.append({
+                "entries": chunkSummary,
+                "startTime": timeOffset,
+                "overlap": float(
+                    overlapBeats * np.median(np.diff(beatTimes))
+                ) if len(beatTimes) > 1 else 0.0
+            })
+
+        if not allSummaries:
+            return []
+
+        return self._mergeChunkedSummaries(allSummaries)
+
+    @staticmethod
+    def _mergeChunkedSummaries(allSummaries):
+        merged = []
+
+        for i, chunk in enumerate(allSummaries):
+            overlap = chunk["overlap"]
+
+            for entry in chunk["entries"]:
+                isOverlap = (
+                    i > 0
+                    and entry["time"] - chunk["startTime"] < overlap
+                )
+
+                if isOverlap and merged:
+                    prev = merged[-1]
+                    if (
+                        abs(entry["time"] - prev["time"]) < 1.5
+                        and entry["chord"] == prev["chord"]
+                    ):
+                        continue
+
+                merged.append(dict(entry))
+
+        merged.sort(key=lambda e: e["time"])
+        return merged
+
     def _viterbiDecode(
         self,
         scores,
@@ -462,6 +652,9 @@ class ChordDetector:
         janela (normalizados em log-probabilidades). As transições
         favorecem permanecer no mesmo acorde e mover por quinta justa,
         reduzindo trocas espúrias sem congelar a cifra.
+
+        Para áudios muito longos (>200 janelas), usa chunking
+        automático com sobreposição para manter performance linear.
 
         Args:
             scores (np.ndarray): Matriz (n_states, n_windows) de
@@ -479,21 +672,66 @@ class ChordDetector:
 
         nStates, nFrames = scores.shape
 
+        CHUNK_SIZE = 200
+        OVERLAP = 20
+
+        if nFrames <= CHUNK_SIZE:
+            return self._viterbiDecodeSingle(
+                scores, chordLabels,
+                stayProb, temperature, fifthBoost
+            )
+
+        step = CHUNK_SIZE - OVERLAP
+        fullPath = np.zeros(nFrames, dtype=int)
+
+        for start in range(0, nFrames, step):
+            end = min(start + CHUNK_SIZE, nFrames)
+            chunkScores = scores[:, start:end]
+
+            chunkPath = self._viterbiDecodeSingle(
+                chunkScores, chordLabels,
+                stayProb, temperature, fifthBoost
+            )
+
+            if start > 0:
+                blendStart = OVERLAP // 2
+                for i in range(blendStart, len(chunkPath)):
+                    fullPath[start + i] = chunkPath[i]
+            else:
+                fullPath[start:end] = chunkPath
+
+            if end >= nFrames:
+                break
+
+        return fullPath
+
+    def _viterbiDecodeSingle(
+        self,
+        scores,
+        chordLabels,
+        stayProb=0.5,
+        temperature=10.0,
+        fifthBoost=2.0
+    ):
+        """
+        Viterbi padrão para um único chunk (sem chunking interno).
+        """
+
+        nStates, nFrames = scores.shape
+
         roots = np.array([
             NOTE_NAMES.index(splitChordLabel(label)[0])
             for label in chordLabels
         ])
 
         transition = self._buildTransitionMatrix(
-            nStates,
-            roots,
+            nStates, roots,
             stayProb=stayProb,
             fifthBoost=fifthBoost
         )
         logTransition = np.log(transition + 1e-12)
         logEmission = self._logEmission(
-            scores,
-            temperature=temperature
+            scores, temperature=temperature
         )
 
         viterbi = np.zeros((nStates, nFrames))
@@ -502,12 +740,10 @@ class ChordDetector:
         viterbi[:, 0] = logEmission[:, 0]
 
         for frame in range(1, nFrames):
-
             candidates = (
                 viterbi[:, frame - 1][:, None]
                 + logTransition
             )
-
             bestPrevious = np.argmax(candidates, axis=0)
             viterbi[:, frame] = (
                 logEmission[:, frame]

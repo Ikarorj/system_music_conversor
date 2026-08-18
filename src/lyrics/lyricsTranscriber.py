@@ -40,7 +40,7 @@ class LyricsTranscriber:
         self,
         audioSignal,
         sampleRate,
-        language="pt",
+        language=None,
         wordTimestamps=True,
         beamSize=5,
         initialPrompt=None,
@@ -59,7 +59,8 @@ class LyricsTranscriber:
         Args:
             audioSignal (np.ndarray): Sinal de áudio.
             sampleRate (int): Taxa de amostragem em Hz.
-            language (str): Idioma (ex.: "pt").
+            language (str): Idioma (ex.: "pt"). Se None (padrão),
+                o Whisper detecta o idioma automaticamente no áudio.
             wordTimestamps (bool): Se True, inclui o tempo de cada
                 palavra.
             beamSize (int): Tamanho do feixe de decodificação.
@@ -103,7 +104,7 @@ class LyricsTranscriber:
 
         audio16k = np.asarray(audio16k, dtype=np.float32)
 
-        if initialPrompt is None:
+        if initialPrompt is None and language == "pt":
             initialPrompt = (
                 "A seguir, a transcrição da letra de uma música "
                 "em português brasileiro."
@@ -140,6 +141,7 @@ class LyricsTranscriber:
                 "start": float(segment.start),
                 "end": float(segment.end),
                 "text": segment.text.strip(),
+                "language": getattr(segment, "language", None),
                 "words": words
             })
 

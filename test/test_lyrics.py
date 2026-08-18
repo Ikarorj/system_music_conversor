@@ -15,7 +15,7 @@ from harmony.chordDetector import (
 )
 from harmony.keyDetector import KeyDetector
 from lyrics.lyricsTranscriber import LyricsTranscriber
-from output.shordSheetGenerator import ChordSheetGenerator
+from output.sheetGenerator import ChordSheetGenerator
 
 
 def formatTime(seconds):
@@ -94,7 +94,7 @@ def main():
     t0 = time.time()
 
     chroma = ChromaExtractor().extractChroma(signal, sr)
-    key = KeyDetector().detectKey(chroma)
+    key = KeyDetector().detectKey(chroma, sampleRate=sr)
     labels = diatonicChordsForKey(key["root"], key["mode"])
 
     tempoInfo = TempoExtractor().extractTempo(signal, sr)
@@ -122,13 +122,19 @@ def main():
     lyrics = transcriber.transcribe(
         signal,
         sr,
-        language="pt",
+        language=None,
         beamSize=8,
         hotwords=hotwords,
         isolateVocals=isolateVocals
     )
 
     print(f"Letra transcrita em {time.time() - t0:.1f}s")
+
+    for segment in lyrics:
+        if segment["language"]:
+            print(f"Idioma detectado: {segment['language']}")
+            break
+
     print()
 
     printWordTimestamps(lyrics)

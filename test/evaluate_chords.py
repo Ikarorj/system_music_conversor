@@ -9,6 +9,7 @@ import numpy as np
 from audio.audioLoader import AudioLoader
 from features.chromaExtractor import ChromaExtractor
 from harmony.chordDetector import (
+    CHORD_QUALITIES,
     ChordDetector,
     diatonicChordsForKey
 )
@@ -39,15 +40,7 @@ def parseChord(label):
 
 
 def synthesizeChord(rootName, quality, seconds=CHORD_SECONDS, sr=SR):
-    semitones = {
-        "": [0, 4, 7],
-        "m": [0, 3, 7],
-        "7": [0, 4, 7, 10],
-        "m7": [0, 3, 7, 10],
-        "dim": [0, 3, 6],
-        "sus2": [0, 2, 7],
-        "sus4": [0, 5, 7]
-    }[quality]
+    semitones = CHORD_QUALITIES[quality]
 
     t = np.arange(int(seconds * sr)) / sr
     rootFreq = NOTE_HZ[rootName]

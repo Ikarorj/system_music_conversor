@@ -7,3 +7,4 @@ soundfile==0.14.0
 jupyterlab==4.6.1
 faster-whisper==1.2.1
 demucs==4.1.0
+pytest>=8.0.0

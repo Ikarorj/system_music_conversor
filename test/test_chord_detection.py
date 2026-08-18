@@ -11,7 +11,7 @@ from harmony.chordDetector import (
     diatonicChordsForKey
 )
 from harmony.keyDetector import KeyDetector
-from output.shordSheetGenerator import ChordSheetGenerator
+from output.sheetGenerator import ChordSheetGenerator
 
 
 def detectChart(audioSignal, sampleRate):
