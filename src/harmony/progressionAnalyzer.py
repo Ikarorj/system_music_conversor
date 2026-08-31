@@ -1,3 +1,9 @@
+def _formatTimestamp(seconds):
+    minutes = int(seconds // 60)
+    remainingSeconds = seconds - minutes * 60
+    return f"{minutes:02d}:{remainingSeconds:05.2f}"
+
+
 class ProgressionAnalyzer:
 
     def detectProgression(
@@ -16,8 +22,8 @@ class ProgressionAnalyzer:
                 um acorde ser considerado parte da progressão.
 
         Returns:
-            list: Lista de dicionários com chord, start, end e
-                  duration.
+            list: Lista de dicionários com chord, start, end,
+                  duration e timestamp.
         """
 
         segments = []
@@ -76,5 +82,6 @@ class ProgressionAnalyzer:
             "chord": chord,
             "start": start,
             "end": end,
-            "duration": duration
+            "duration": duration,
+            "timestamp": _formatTimestamp(start)
         })

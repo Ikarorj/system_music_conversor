@@ -9,6 +9,8 @@ logger = logging.getLogger(__name__)
 
 class AudioPreprocessor:
 
+    MIN_SAMPLE_RATE = 22050
+
     def __init__(
         self,
         targetSampleRate=None,
@@ -18,14 +20,15 @@ class AudioPreprocessor:
         noiseCutHigh=16000.0,
         trimSilence=False,
         trimTopDb=40,
-        padToSeconds=None
+        padToSeconds=None,
+        autoUpsample=True
     ):
         """
         Pré-processamento de áudio antes da extração de features.
 
         Args:
             targetSampleRate (int): Taxa de amostragem alvo. Se None,
-                mantém a original (recomendado para preservar质量).
+                mantém a original (recomendado para preservar qualidade).
             normalize (bool): Normaliza o pico para [-1, 1].
             removeNoise (bool): Aplica filtro passa-banda para
                 reduzir ruído fora da faixa musical.
@@ -35,6 +38,8 @@ class AudioPreprocessor:
             trimTopDb (float): Limiar em dB para considerar silêncio.
             padToSeconds (float): Se definido, faz padding/trunc
                 para atingir essa duração em segundos.
+            autoUpsample (bool): Se True, resample automaticamente
+                para MIN_SAMPLE_RATE quando o SR original for inferior.
         """
 
         self.targetSampleRate = targetSampleRate
@@ -45,6 +50,7 @@ class AudioPreprocessor:
         self.trimSilence = trimSilence
         self.trimTopDb = trimTopDb
         self.padToSeconds = padToSeconds
+        self.autoUpsample = autoUpsample
 
     def process(self, audioSignal, sampleRate):
         """
@@ -63,6 +69,24 @@ class AudioPreprocessor:
             len(audioSignal), sampleRate,
             len(audioSignal) / sampleRate
         )
+
+        if (
+            self.autoUpsample
+            and sampleRate < self.MIN_SAMPLE_RATE
+            and not self.targetSampleRate
+        ):
+            logger.warning(
+                "Sample rate %d Hz é inferior ao mínimo recomendado "
+                "(%d Hz) para análise de acordes. Resampling automático.",
+                sampleRate, self.MIN_SAMPLE_RATE
+            )
+            audioSignal = librosa.resample(
+                audioSignal,
+                orig_sr=sampleRate,
+                target_sr=self.MIN_SAMPLE_RATE
+            )
+            sampleRate = self.MIN_SAMPLE_RATE
+            logger.info("Resample automático para %d Hz", sampleRate)
 
         if self.targetSampleRate and sampleRate != self.targetSampleRate:
             audioSignal = librosa.resample(

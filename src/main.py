@@ -3,6 +3,10 @@ import logging
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from musicAnalyzer import MusicAnalyzer
@@ -36,63 +40,92 @@ def main():
         nargs="?",
         help="Caminho do arquivo de áudio"
     )
-    parser.add_argument(
+
+    outputGroup = parser.add_argument_group("saída")
+    outputGroup.add_argument(
         "--list-chords", action="store_true",
         help="Lista os acordes detectados por janela"
     )
-    parser.add_argument(
+    outputGroup.add_argument(
         "--list-segments", action="store_true",
-        help="Lista segmentos de progressão (acorde repetido)"
+        help="Lista segmentos de progressão"
     )
-    parser.add_argument(
-        "--lyrics", action="store_true",
-        help="Transcreve a letra da música"
-    )
-    parser.add_argument(
-        "--isolate", action="store_true",
-        help="Isola a voz com Demucs antes de transcrever"
-    )
-    parser.add_argument(
-        "--language", default=None,
-        help="Idioma para transcrição (ex.: pt)"
-    )
-    parser.add_argument(
+    outputGroup.add_argument(
         "--export", nargs="+",
         choices=["txt", "json", "csv", "musicxml"],
         default=[],
         help="Formatos de exportação"
     )
-    parser.add_argument(
-        "--method", choices=["cqt", "nnls"], default="nnls",
-        help="Método de extração de chroma (padrão: nnls)"
-    )
-    parser.add_argument(
-        "--no-simplify", action="store_true",
-        help="Não simplifica acordes complexos"
-    )
-    parser.add_argument(
-        "--no-chunked", action="store_true",
-        help="Desativa chunking no Viterbi"
-    )
-    parser.add_argument(
-        "--chunk-beats", type=int, default=200,
-        help="Batidas por chunk no Viterbi (padrão: 200)"
-    )
-    parser.add_argument(
-        "--beats-per-window", type=int, default=4,
-        help="Batidas por janela de acorde (padrão: 4 = um compasso)"
-    )
-    parser.add_argument(
+    outputGroup.add_argument(
         "--no-plot", action="store_true",
         help="Não exibe gráficos"
     )
-    parser.add_argument(
+    outputGroup.add_argument(
         "--output-dir", default="output",
-        help="Diretório de saída (padrão: output)"
+        help="Diretório de saída"
     )
+
+    audioGroup = parser.add_argument_group("processamento de áudio")
+    audioGroup.add_argument(
+        "--method", choices=["cqt", "nnls"], default="nnls",
+        help="Método de chroma (padrão: nnls)"
+    )
+    audioGroup.add_argument(
+        "--no-simplify", action="store_true",
+        help="Não simplifica acordes"
+    )
+    audioGroup.add_argument(
+        "--no-chunked", action="store_true",
+        help="Desativa chunking no Viterbi"
+    )
+    audioGroup.add_argument(
+        "--chunk-beats", type=int, default=200,
+        help="Batidas por chunk no Viterbi"
+    )
+    audioGroup.add_argument(
+        "--beats-per-window", type=int, default=4,
+        help="Batidas por janela de acorde"
+    )
+
+    interpGroup = parser.add_argument_group("experimentos de interpretação")
+    interpGroup.add_argument(
+        "--experiment", choices=["a", "b", "c"], default="a",
+        help=(
+            "a=DSP puro (padrão), "
+            "b=DSP+regras musicais, "
+            "c=DSP+LLM (Groq)"
+        )
+    )
+    interpGroup.add_argument(
+        "--beats-per-chunk", type=int, default=8,
+        help="Batidas por chunk para evidências (padrão: 8)"
+    )
+    interpGroup.add_argument(
+        "--groq-api-key", default=None,
+        help="Chave API Groq (ou defina GROQ_API_KEY)"
+    )
+    interpGroup.add_argument(
+        "--groq-model", default="qwen/qwen3.6-27b",
+        help="Modelo Groq (padrão: qwen/qwen3.6-27b)"
+    )
+
+    lyricsGroup = parser.add_argument_group("letra")
+    lyricsGroup.add_argument(
+        "--lyrics", action="store_true",
+        help="Transcreve a letra"
+    )
+    lyricsGroup.add_argument(
+        "--isolate", action="store_true",
+        help="Isola voz com Demucs"
+    )
+    lyricsGroup.add_argument(
+        "--language", default=None,
+        help="Idioma para transcrição (ex.: pt)"
+    )
+
     parser.add_argument(
         "-v", "--verbose", action="store_true",
-        help="Saída detalhada (DEBUG)"
+        help="Saída detalhada"
     )
 
     args = parser.parse_args()
@@ -109,6 +142,21 @@ def main():
         print(f"Erro: arquivo não encontrado: {audioPath}")
         sys.exit(1)
 
+    if args.experiment == "c" and not args.groq_api_key:
+        import os
+        if not os.environ.get("GROQ_API_KEY"):
+            print(
+                "Erro: experimento 'c' requer chave Groq.\n"
+                "Use --groq-api-key ou defina GROQ_API_KEY."
+            )
+            sys.exit(1)
+
+    experimentNames = {
+        "a": "DSP puro",
+        "b": "DSP + regras musicais",
+        "c": "DSP + LLM (Groq)"
+    }
+
     preprocessor = AudioPreprocessor()
 
     analyzer = MusicAnalyzer(
@@ -119,6 +167,8 @@ def main():
         outputDir=args.output_dir
     )
 
+    print(f"Experimento: {experimentNames[args.experiment]}")
+
     result = analyzer.analyze(
         audioPath,
         language=args.language,
@@ -126,7 +176,12 @@ def main():
         isolateVocals=args.isolate,
         exportFormats=args.export if args.export else None,
         chordMethod=args.method,
-        beatsPerWindow=args.beats_per_window
+        beatsPerWindow=args.beats_per_window,
+        experiment=args.experiment,
+        groqApiKey=args.groq_api_key,
+        groqModel=args.groq_model,
+        beatsPerChunk=args.beats_per_chunk,
+        verbose=args.verbose
     )
 
     print()
@@ -136,8 +191,14 @@ def main():
 
     info = result["audioInfo"]
     print(f"Sample Rate: {info['sampleRate']} Hz")
-    print(f"Número de amostras: {info['samples']}")
+    if info.get("originalSampleRate") != info["sampleRate"]:
+        print(f"Sample Rate Original: {info['originalSampleRate']} Hz")
     print(f"Duração: {info['duration']:.2f}s")
+
+    if info["sampleRate"] < 22050:
+        print()
+        print("AVISO: Sample rate baixo (< 22050 Hz).")
+        print("A análise de acordes pode ser menos precisa.")
 
     if not args.no_plot:
         try:
@@ -150,7 +211,7 @@ def main():
     key = result["key"]
     print()
     print("=" * 50)
-    print("Tonalidade estimada (Krumhansl-Schmuckler)")
+    print("Tonalidade estimada")
     print("=" * 50)
     print(
         f"Tonalidade: {key['key']} "
@@ -164,13 +225,43 @@ def main():
     tempo = result["tempo"]
     print(
         f"Tempo: {tempo['tempo']:.1f} BPM "
-        f"({len(tempo['beatTimes'])} batidas detectadas)"
+        f"({len(tempo['beatTimes'])} batidas)"
     )
+
+    if "chunkEvidences" in result and args.verbose:
+        print()
+        print("=" * 50)
+        print("Evidências por chunk")
+        print("=" * 50)
+        for ev in result["chunkEvidences"]:
+            print()
+            print(f"  Chunk {ev['start']}s - {ev['end']}s:")
+            for w in ev["windowChords"]:
+                cands = ", ".join(
+                    f"{c['chord']}({c['score']:.2f})"
+                    for c in w["candidates"]
+                )
+                print(f"    {w['time']}s: {cands}")
+
+    if "interpreterResults" in result:
+        print()
+        print("=" * 50)
+        print("Decisões do interpretador")
+        print("=" * 50)
+        for chunkResult in result["interpreterResults"]:
+            for d in chunkResult["decisions"]:
+                marker = ""
+                if "originalChord" in d:
+                    marker = f" (DSP dizia: {d['originalChord']})"
+                print(
+                    f"  {d['time']:.1f}s -> {d['chord']} "
+                    f"(confiança: {d['confidence']:.2f}){marker}"
+                )
 
     if args.list_chords:
         print()
         print("=" * 50)
-        print("Cifra simplificada para violão")
+        print("Cifra")
         print("=" * 50)
         print(result["sheet"])
 
@@ -198,9 +289,7 @@ def main():
             print("Acordes simplificados")
             print("=" * 50)
             for e in simplified:
-                print(
-                    f"  {e['originalChord']} -> {e['chord']}"
-                )
+                print(f"  {e['originalChord']} -> {e['chord']}")
 
     if args.lyrics and "lyrics" in result:
         print()
@@ -208,17 +297,13 @@ def main():
         print("Letra transcrita")
         print("=" * 50)
         for seg in result["lyrics"]:
-            time = formatTime(seg["start"])
-            print(f"{time}  {seg['text']}")
+            t = formatTime(seg["start"])
+            print(f"{t}  {seg['text']}")
 
     print()
-    print(
-        f"Tempo de processamento: "
-        f"{result['processingTime']:.2f}s"
-    )
+    print(f"Tempo total: {result['processingTime']:.2f}s")
 
     if args.export:
-        print()
         print(f"Arquivos exportados em: {args.output_dir}/")
 
 

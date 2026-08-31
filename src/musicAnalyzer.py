@@ -13,12 +13,20 @@ from harmony.chordDetector import (
     diatonicChordsForKey
 )
 from harmony.chordSimplifier import ChordSimplifier
+from harmony.chunkEvidence import ChunkEvidenceBuilder
 from harmony.keyDetector import KeyDetector
 from harmony.progressionAnalyzer import ProgressionAnalyzer
 from output.sheetGenerator import ChordSheetGenerator
 from output.fileExporter import FileExporter
 
 logger = logging.getLogger(__name__)
+
+CHROMA_HOP = 512
+
+
+def hopSeconds(sampleRate):
+    """Duração de um frame de chroma (hop=512) em segundos."""
+    return CHROMA_HOP / sampleRate
 
 
 class MusicAnalyzer:
@@ -32,22 +40,6 @@ class MusicAnalyzer:
         simplifyChords=True,
         outputDir="output"
     ):
-        """
-        API pública para análise completa de áudio musical.
-
-        Args:
-            preprocessor (AudioPreprocessor): Pré-processador. Se
-                None, usa configurações padrão.
-            segmenter (AudioSegmenter): Segmentador de áudio. Se
-                None, usa chunking automático na detecção.
-            chunkedDetection (bool): Se True, usa chunking no Viterbi
-                para áudios longos.
-            chunkBeats (int): Batidas por chunk no Viterbi chunked.
-            simplifyChords (bool): Se True, simplifica acordes
-                complexos para violão.
-            outputDir (str): Diretório para exportações.
-        """
-
         self.preprocessor = preprocessor or AudioPreprocessor()
         self.segmenter = segmenter
         self.chunkedDetection = chunkedDetection
@@ -60,6 +52,7 @@ class MusicAnalyzer:
         self.keyDetector = KeyDetector()
         self.chordDetector = ChordDetector()
         self.progressionAnalyzer = ProgressionAnalyzer()
+        self.evidenceBuilder = ChunkEvidenceBuilder()
         self.sheetGenerator = ChordSheetGenerator()
         self.exporter = FileExporter(outputDir)
 
@@ -71,26 +64,24 @@ class MusicAnalyzer:
         isolateVocals=False,
         exportFormats=None,
         chordMethod="nnls",
-        beatsPerWindow=2
+        beatsPerWindow=4,
+        experiment=None,
+        groqApiKey=None,
+        groqModel="llama-3.3-70b-versatile",
+        beatsPerChunk=8,
+        verbose=False
     ):
         """
         Análise completa de um arquivo de áudio.
 
         Args:
-            audioPath (str): Caminho do arquivo de áudio.
-            language (str): Idioma para transcrição (ex.: "pt").
-            transcribeLyrics (bool): Se True, transcreve a letra.
-            isolateVocals (bool): Se True, isola voz antes de
-                transcrever.
-            exportFormats (list): Formatos de exportação:
-                "txt", "json", "csv", "musicxml".
-            chordMethod (str): "cqt" ou "nnls" para chroma.
-            beatsPerWindow (int): Batidas por janela de acorde.
-
-        Returns:
-            dict: Resultado da análise completa com chaves:
-                audioInfo, key, tempo, chordSummary, chords,
-                progression, sheet, simplifiedChords, lyrics.
+            audioPath: Caminho do áudio.
+            experiment (str): "a" (DSP puro), "b" (DSP+regras),
+                "c" (DSP+LLM), ou None (DSP puro).
+            groqApiKey (str): Chave Groq para experimento C.
+            groqModel (str): Modelo Groq para experimento C.
+            beatsPerChunk (int): Batidas por chunk para evidências.
+            verbose (bool): Mostrar evidências detalhadas.
         """
 
         t0 = time.time()
@@ -98,8 +89,8 @@ class MusicAnalyzer:
 
         logger.info("Carregando áudio: %s", audioPath)
         audioSignal, sampleRate = self.loader.loadAudio(audioPath)
-
         result["_originalAudio"] = (audioSignal.copy(), sampleRate)
+        originalSampleRate = sampleRate
 
         audioSignal, sampleRate = self.preprocessor.process(
             audioSignal, sampleRate
@@ -109,13 +100,17 @@ class MusicAnalyzer:
         result["audioInfo"] = {
             "path": audioPath,
             "sampleRate": sampleRate,
+            "originalSampleRate": originalSampleRate,
             "duration": duration,
             "samples": len(audioSignal)
         }
-        logger.info(
-            "Áudio: %d Hz, %.1fs, %d amostras",
-            sampleRate, duration, len(audioSignal)
-        )
+
+        if originalSampleRate < 22050:
+            logger.warning(
+                "Sample rate original (%d Hz) é baixo. "
+                "Resultado pode ser menos preciso.",
+                originalSampleRate
+            )
 
         logger.info("Extraindo chroma (%s)...", chordMethod)
         chroma = self.chromaExtractor.extractChroma(
@@ -131,57 +126,76 @@ class MusicAnalyzer:
         )
         result["diatonicChords"] = chordLabels
 
-        logger.info(
-            "Tom: %s (score: %.3f)", key["key"], key["score"]
-        )
-        logger.info(
-            "Campo harmônico: %s", ", ".join(chordLabels)
-        )
+        logger.info("Tom: %s (score: %.3f)", key["key"], key["score"])
 
         logger.info("Detectando batidas...")
         tempoInfo = self.tempoExtractor.extractTempo(
             audioSignal, sampleRate
         )
         result["tempo"] = tempoInfo
-        logger.info(
-            "Tempo: %.1f BPM (%d batidas)",
-            tempoInfo["tempo"],
-            len(tempoInfo["beatTimes"])
+
+        tempo = tempoInfo["tempo"]
+        beatTimes = tempoInfo["beatTimes"]
+        logger.info("Tempo: %.1f BPM (%d batidas)", tempo, len(beatTimes))
+
+        logger.info("Detectando acordes (DSP puro)...")
+        chordSummary = self.chordDetector.detectChordSummary(
+            chroma, sampleRate,
+            windowSeconds=max(2.0, beatsPerWindow * 2.0 * hopSeconds(sampleRate)),
+            smoothWindows=1,
+            labels=chordLabels
         )
 
-        logger.info("Detectando acordes...")
-        if self.chunkedDetection:
-            chordSummary = self.chordDetector.detectChordSummaryChunked(
-                chroma,
-                sampleRate,
-                beatTimes=tempoInfo["beatTimes"],
-                beatsPerWindow=beatsPerWindow,
-                labels=chordLabels,
-                chunkBeats=self.chunkBeats,
-                stayProb=0.7,
-                temperature=8.0,
-                fifthBoost=2.5
+        if self._isDegenerate(chordSummary):
+            logger.warning(
+                "Detecção degenerada com campo harmônico diatônico "
+                "(%d acordes únicos). Retentando com vocabulário "
+                "completo.",
+                len(set(e["chord"] for e in chordSummary))
             )
-        else:
-            chordSummary = self.chordDetector.detectChordSummaryWithBeats(
-                chroma,
-                sampleRate,
-                beatTimes=tempoInfo["beatTimes"],
-                beatsPerWindow=beatsPerWindow,
-                labels=chordLabels,
-                stayProb=0.7,
-                temperature=8.0,
-                fifthBoost=2.5
+            chordSummary = self.chordDetector.detectChordSummary(
+                chroma, sampleRate,
+                windowSeconds=max(2.0, beatsPerWindow * 2.0 * hopSeconds(sampleRate)),
+                smoothWindows=1,
+                labels=None
             )
 
         result["chordSummary"] = chordSummary
-        result["chords"] = [
-            entry["chord"] for entry in chordSummary
-        ]
+        result["chords"] = [e["chord"] for e in chordSummary]
 
-        logger.info(
-            "Acordes detectados: %d janelas", len(chordSummary)
-        )
+        if experiment in ("b", "c"):
+            logger.info("Construindo evidências por chunk...")
+            chunkEvidences = self._buildChunkEvidences(
+                chordSummary, key, tempo, beatTimes,
+                chroma, sampleRate, beatsPerChunk
+            )
+
+            result["chunkEvidences"] = chunkEvidences
+
+            if verbose:
+                for ev in chunkEvidences:
+                    logger.info(
+                        "\n%s",
+                        self.evidenceBuilder.formatForLLM(ev)
+                    )
+
+            if experiment == "c":
+                logger.info("Interpretando com LLM...")
+                from harmony.llmInterpreter import LLMInterpreter
+                interpreter = LLMInterpreter(apiKey=groqApiKey, model=groqModel)
+            else:
+                logger.info("Interpretando com regras musicais...")
+                from harmony.ruleInterpreter import RuleInterpreter
+                interpreter = RuleInterpreter()
+
+            interpResults = interpreter.interpretBatch(chunkEvidences)
+            result["interpreterResults"] = interpResults
+
+            chordSummary = self._mergeInterpretation(
+                interpResults, chordSummary
+            )
+            result["chordSummary"] = chordSummary
+            result["chords"] = [e["chord"] for e in chordSummary]
 
         logger.info("Analisando progressão...")
         progression = self.progressionAnalyzer.detectProgression(
@@ -196,12 +210,9 @@ class MusicAnalyzer:
             result["simplifiedChords"] = simplified
 
         logger.info("Gerando cifra...")
-        sheet = self.sheetGenerator.generate(
-            chordSummary, key
-        )
+        sheet = self.sheetGenerator.generate(chordSummary, key)
         result["sheet"] = sheet
 
-        lyrics = None
         if transcribeLyrics:
             logger.info("Transcrevendo letras...")
             from lyrics.lyricsTranscriber import LyricsTranscriber
@@ -212,8 +223,6 @@ class MusicAnalyzer:
                 isolateVocals=isolateVocals
             )
             result["lyrics"] = lyrics
-
-            logger.info("Gerando cifra com letras...")
             sheetWithLyrics = self.sheetGenerator.generateWithLyrics(
                 chordSummary, key, lyrics
             )
@@ -228,84 +237,115 @@ class MusicAnalyzer:
 
         return result
 
-    def analyzeAudio(
-        self,
-        audioSignal,
-        sampleRate,
-        key=None,
-        chordMethod="nnls",
-        beatsPerWindow=2
+    def _buildChunkEvidences(
+        self, chordSummary, key, tempo, beatTimes,
+        chroma, sampleRate, beatsPerChunk
     ):
+        beatTimes = np.asarray(beatTimes, dtype=float)
+
+        if len(beatTimes) == 0:
+            return []
+
+        boundaries = [float(beatTimes[0])]
+        for i in range(beatsPerChunk, len(beatTimes), beatsPerChunk):
+            boundaries.append(float(beatTimes[i]))
+        boundaries.append(float(beatTimes[-1]) + 1.0)
+
+        chunkEvidences = []
+
+        for i in range(len(boundaries) - 1):
+            chunkStart = boundaries[i]
+            chunkEnd = boundaries[i + 1]
+
+            chunkWindows = [
+                w for w in chordSummary
+                if w["time"] >= chunkStart - 0.5
+                and w["time"] < chunkEnd
+            ]
+
+            if not chunkWindows:
+                continue
+
+            evidence = self.evidenceBuilder.buildChunkEvidence(
+                chunkStart, chunkEnd,
+                chunkWindows, key, tempo,
+                beatTimes, chroma, sampleRate
+            )
+            chunkEvidences.append(evidence)
+
+        return chunkEvidences
+
+    @staticmethod
+    def _mergeInterpretation(interpResults, originalSummary):
+        interpMap = {}
+        for result in interpResults:
+            for decision in result["decisions"]:
+                interpMap[round(decision["time"], 2)] = decision
+
+        merged = []
+        for entry in originalSummary:
+            newEntry = dict(entry)
+            timeKey = round(entry["time"], 2)
+            if timeKey in interpMap:
+                newEntry["chord"] = interpMap[timeKey]["chord"]
+                newEntry["interpConfidence"] = interpMap[timeKey]["confidence"]
+                newEntry["originalChord"] = entry["chord"]
+                root, quality = newEntry["chord"][:1], newEntry["chord"][1:]
+                if len(newEntry["chord"]) >= 2 and newEntry["chord"][1] == "#":
+                    root, quality = newEntry["chord"][:2], newEntry["chord"][2:]
+                newEntry["root"] = root
+                newEntry["quality"] = quality
+            merged.append(newEntry)
+
+        return merged
+
+    @staticmethod
+    def _isDegenerate(chordSummary, minUnique=3, maxSameRatio=0.85):
         """
-        Análise a partir de um sinal de áudio já carregado (útil
-        para testes e pipelines customizados).
+        Verifica se a detecção de acordes é degenerada: poucos acordes
+        únicos ou um único acorde dominando a maioria das janelas.
 
         Args:
-            audioSignal (np.ndarray): Sinal de áudio processado.
-            sampleRate (int): Taxa de amostragem.
-            key (dict): Tonalidade pré-detectada (opcional).
-            chordMethod (str): Método de chroma.
-            beatsPerWindow (int): Batidas por janela.
+            chordSummary (list): Resumo de acordes detectados.
+            minUnique (int): Número mínimo de acordes únicos esperado.
+            maxSameRatio (float): Razão máxima permitida para um
+                único acorde (0 a 1).
 
         Returns:
-            dict: Resultado parcial da análise.
+            bool: True se a detecção é degenerada.
         """
 
-        result = {}
+        if not chordSummary:
+            return True
 
-        chroma = self.chromaExtractor.extractChroma(
-            audioSignal, sampleRate, method=chordMethod
-        )
-        result["chroma"] = chroma
+        chords = [e["chord"] for e in chordSummary]
+        uniqueChords = set(chords)
 
-        if key is None:
-            key = self.keyDetector.detectKey(chroma, sampleRate)
-        result["key"] = key
+        if len(uniqueChords) < minUnique:
+            return True
 
-        chordLabels = diatonicChordsForKey(
-            key["root"], key["mode"]
-        )
-        result["diatonicChords"] = chordLabels
+        from collections import Counter
+        counts = Counter(chords)
+        mostCommonRatio = counts.most_common(1)[0][1] / len(chords)
 
-        tempoInfo = self.tempoExtractor.extractTempo(
-            audioSignal, sampleRate
-        )
-        result["tempo"] = tempoInfo
-
-        chordSummary = self.chordDetector.detectChordSummaryWithBeats(
-            chroma, sampleRate,
-            beatTimes=tempoInfo["beatTimes"],
-            beatsPerWindow=beatsPerWindow,
-            labels=chordLabels
-        )
-        result["chordSummary"] = chordSummary
-        result["chords"] = [e["chord"] for e in chordSummary]
-
-        return result
+        return mostCommonRatio > maxSameRatio
 
     def _exportResults(self, result, formats, audioPath):
         from pathlib import Path
-
         baseName = Path(audioPath).stem
 
         if "txt" in formats:
-            self.exporter.exportTxt(
-                result["sheet"],
-                f"{baseName}_cifra"
-            )
+            self.exporter.exportTxt(result["sheet"], f"{baseName}_cifra")
             if "sheetWithLyrics" in result:
                 self.exporter.exportTxt(
-                    result["sheetWithLyrics"],
-                    f"{baseName}_cifra_letra"
+                    result["sheetWithLyrics"], f"{baseName}_cifra_letra"
                 )
 
         if "json" in formats:
             exportData = {
                 "audioInfo": result["audioInfo"],
                 "key": result["key"],
-                "tempo": {
-                    "bpm": result["tempo"]["tempo"]
-                },
+                "tempo": {"bpm": result["tempo"]["tempo"]},
                 "chordSummary": [
                     {
                         "time": e["time"],
@@ -327,24 +367,18 @@ class MusicAnalyzer:
                     }
                     for e in result["simplifiedChords"]
                 ]
-            self.exporter.exportJson(
-                exportData, f"{baseName}_analise"
-            )
+            self.exporter.exportJson(exportData, f"{baseName}_analise")
 
         if "csv" in formats:
             self.exporter.exportCsv(
-                result["chordSummary"],
-                f"{baseName}_acordes"
+                result["chordSummary"], f"{baseName}_acordes"
             )
 
         if "musicxml" in formats:
             try:
                 self.exporter.exportMusicXml(
-                    result["chordSummary"],
-                    result["key"],
+                    result["chordSummary"], result["key"],
                     f"{baseName}_partitura"
                 )
             except Exception as e:
-                logger.warning(
-                    "Falha ao exportar MusicXML: %s", e
-                )
+                logger.warning("Falha ao exportar MusicXML: %s", e)

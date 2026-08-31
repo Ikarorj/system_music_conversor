@@ -65,12 +65,29 @@ class ChromaExtractor:
         sobre esse dicionário. O resultado são ativações esparsas de
         notas, que são somadas em 12 classes de altura.
 
+        Para sample rates baixos (< 32000 Hz), ajusta automaticamente
+        fmin, nBins e número de harmônicos para evitar aliases e
+        manter resolução adequada.
+
         Returns:
             np.ndarray: Matriz chroma (12, n_frames).
         """
 
-        fmin = librosa.note_to_hz("C1")
-        nBins = 84
+        nyquist = sampleRate / 2.0
+
+        if sampleRate < 32000:
+            fmin = librosa.note_to_hz("C2")
+            maxHarmonics = 6
+        else:
+            fmin = librosa.note_to_hz("C1")
+            maxHarmonics = 15
+
+        maxFreq = min(nyquist * 0.95, 5000.0)
+        nBins = int(12 * np.floor(
+            np.log2(maxFreq / fmin)
+        ))
+        nBins = max(nBins, 36)
+        nBins = min(nBins, 84)
 
         cqtMagnitude = np.abs(librosa.cqt(
             y=audioSignal,
@@ -84,7 +101,7 @@ class ChromaExtractor:
         basis = np.zeros((nBins, nBins))
 
         for note in range(nBins):
-            for harmonicIndex in range(1, 16):
+            for harmonicIndex in range(1, maxHarmonics + 1):
                 harmonicBin = note + 12 * np.log2(harmonicIndex)
                 harmonicBinRounded = int(round(harmonicBin))
                 if harmonicBinRounded >= nBins:
